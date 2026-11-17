@@ -44,6 +44,26 @@ try {
 } catch (e) { if (e.code !== 'ENOENT') throw e; }
 
 const newId = () => crypto.randomBytes(8).toString('hex');
+
+/* ---------- Barcodes: every item gets a short code like RK-0001 ---------- */
+const CODE_PREFIX = 'RK-';
+function nextCode() {
+  let max = 0;
+  for (const i of items) { const n = Number(String(i.code || '').slice(CODE_PREFIX.length)); if (n > max) max = n; }
+  return CODE_PREFIX + String(max + 1).padStart(4, '0');
+}
+// Give items created before barcodes existed a code of their own.
+if (items.some((i) => !i.code)) {
+  for (const i of [...items].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))) if (!i.code) i.code = nextCode();
+  fs.writeFileSync(ITEMS_FILE, JSON.stringify(items, null, 2));
+}
+function lanUrls() {
+  const out = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const a of list || []) if (a.family === 'IPv4' && !a.internal) out.push(`http://${a.address}:${PORT}`);
+  }
+  return out;
+}
 function saveItems() {
   const tmp = ITEMS_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(items, null, 2));
@@ -115,7 +135,7 @@ function filterLog(q) {
   const from = Number(q.get('from')) || null;
   const to = Number(q.get('to')) || null;
   return log.filter((e) => (!type || e.type === type) && (!from || e.at >= from) && (!to || e.at < to) &&
-    (!text || [e.person, e.itemName, e.note].join(' ').toLowerCase().includes(text)));
+    (!text || [e.person, e.itemName, e.itemCode, e.note].join(' ').toLowerCase().includes(text)));
 }
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -157,6 +177,10 @@ async function handle(req, res) {
     return;
   }
   if (p === '/api/items' && m === 'GET') return send(res, 200, items);
+  if (p === '/api/info' && m === 'GET') {
+    // The address printed into QR codes, so phones scanning a label reach this server.
+    return send(res, 200, { url: (process.env.PUBLIC_URL || '').replace(/\/+$/, '') || lanUrls()[0] || `http://localhost:${PORT}` });
+  }
   if (p === '/api/log' && m === 'GET') {
     const limit = Math.min(5000, int(url.searchParams.get('limit')) || 1000);
     return send(res, 200, log.slice(-limit).reverse());
@@ -168,9 +192,9 @@ async function handle(req, res) {
     if (!name) return fail(res, 400, 'Item name is required.');
     const qty = Math.max(0, int(b.qty) || 0);
     const now = Date.now();
-    const item = { id: newId(), name, unit: str(b.unit, 30) || 'pcs', qty, image: null, createdAt: now, updatedAt: now };
+    const item = { id: newId(), code: nextCode(), name, unit: str(b.unit, 30) || 'pcs', qty, image: null, createdAt: now, updatedAt: now };
     items.push(item); saveItems();
-    addLog({ itemId: item.id, itemName: name, type: 'add', qty, delta: qty, after: qty, person: str(b.person, 80), note: 'Item added', device: device(req) });
+    addLog({ itemId: item.id, itemCode: item.code, itemName: name, type: 'add', qty, delta: qty, after: qty, person: str(b.person, 80), note: 'Item added', device: device(req) });
     broadcast();
     return send(res, 201, item);
   }
@@ -189,7 +213,7 @@ async function handle(req, res) {
       item.updatedAt = Date.now();
       saveItems();
       if (item.qty !== before) {
-        addLog({ itemId: item.id, itemName: item.name, type: 'adjust', qty: Math.abs(item.qty - before), delta: item.qty - before,
+        addLog({ itemId: item.id, itemCode: item.code, itemName: item.name, type: 'adjust', qty: Math.abs(item.qty - before), delta: item.qty - before,
           after: item.qty, person: str(b.person, 80), note: `Count corrected from ${before} to ${item.qty}`, device: device(req) });
       }
       broadcast();
@@ -197,10 +221,20 @@ async function handle(req, res) {
     }
     if (m === 'DELETE') {
       items = items.filter((i) => i !== item); saveItems(); removeImage(item);
-      addLog({ itemId: item.id, itemName: item.name, type: 'remove', qty: item.qty, delta: 0, after: null, person: '', note: 'Item removed', device: device(req) });
+      addLog({ itemId: item.id, itemCode: item.code, itemName: item.name, type: 'remove', qty: item.qty, delta: 0, after: null, person: '', note: 'Item removed', device: device(req) });
       broadcast();
       return send(res, 200, { ok: true });
     }
+  }
+
+  if (p === '/api/labels-printed' && m === 'POST') {
+    const b = await readJSON(req);
+    const ids = new Set(Array.isArray(b.ids) ? b.ids.map(String) : []);
+    const now = Date.now();
+    let n = 0;
+    for (const i of items) if (ids.has(i.id)) { i.labelPrintedAt = now; n++; }
+    if (n) { saveItems(); broadcast(); }
+    return send(res, 200, { updated: n });
   }
 
   if ((match = p.match(/^\/api\/items\/([a-f0-9]{16})\/image$/)) && m === 'POST') {
@@ -233,25 +267,25 @@ async function handle(req, res) {
     const next = type === 'take' ? item.qty - qty : item.qty + qty;
     if (next < 0) return fail(res, 409, `Only ${item.qty} on hand.`);
     item.qty = next; item.updatedAt = Date.now(); saveItems();
-    const entry = addLog({ itemId: item.id, itemName: item.name, type, qty, delta: type === 'take' ? -qty : qty, after: next,
+    const entry = addLog({ itemId: item.id, itemCode: item.code, itemName: item.name, type, qty, delta: type === 'take' ? -qty : qty, after: next,
       person, note: str(b.note, 300), device: device(req) });
     broadcast();
     return send(res, 200, { item, entry });
   }
 
   if (p === '/api/export/inventory.csv' && m === 'GET') {
-    const rows = [['Item', 'On hand', 'Unit', 'Status', 'Last updated']].concat(
-      [...items].sort((a, b) => a.name.localeCompare(b.name)).map((i) => [i.name, i.qty, i.unit, i.qty <= 0 ? 'Out' : 'In stock',
+    const rows = [['Barcode', 'Item', 'On hand', 'Unit', 'Status', 'Last updated']].concat(
+      [...items].sort((a, b) => a.name.localeCompare(b.name)).map((i) => [i.code, i.name, i.qty, i.unit, i.qty <= 0 ? 'Out' : 'In stock',
         new Date(i.updatedAt).toLocaleString()]));
     return send(res, 200, '﻿' + csv(rows), { 'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="inventory-${stamp()}.csv"` });
   }
   if (p === '/api/export/activity.csv' && m === 'GET') {
     const rows = filterLog(url.searchParams).slice().reverse();
-    const out = [['Date', 'Time', 'Person', 'Action', 'Quantity', 'Change', 'Item', 'Left after', 'Note', 'Device']].concat(rows.map((e) => {
+    const out = [['Date', 'Time', 'Person', 'Action', 'Quantity', 'Change', 'Item', 'Barcode', 'Left after', 'Note', 'Device']].concat(rows.map((e) => {
       const d = new Date(e.at);
       return [d.toLocaleDateString(), d.toLocaleTimeString(), e.person || '', TYPE_LABEL[e.type] || e.type, Math.abs(e.qty || 0),
-        typeof e.delta === 'number' ? e.delta : '', e.itemName || '', e.after == null ? '' : e.after, e.note || '', e.device || ''];
+        typeof e.delta === 'number' ? e.delta : '', e.itemName || '', e.itemCode || '', e.after == null ? '' : e.after, e.note || '', e.device || ''];
     }));
     return send(res, 200, '﻿' + csv(out), { 'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="inventory-activity-${stamp()}.csv"` });
@@ -265,7 +299,8 @@ async function handle(req, res) {
     return serveFile(res, path.join(UPLOADS, name), 'public, max-age=31536000, immutable');
   }
   if (m === 'GET') {
-    const rel = p === '/' ? 'index.html' : decodeURIComponent(p).replace(/^\/+/, '');
+    // /i/RK-0001 is the link inside each item's QR code; the page opens that item.
+    const rel = p === '/' || /^\/i\/[A-Za-z0-9-]{1,20}$/.test(p) ? 'index.html' : decodeURIComponent(p).replace(/^\/+/, '');
     const file = path.join(PUBLIC, rel);
     if (!file.startsWith(PUBLIC + path.sep)) return fail(res, 404, 'Not found');
     return serveFile(res, file);
@@ -300,7 +335,5 @@ auth.init(DATA_DIR, { onFirstPin: (pin) => {
 server.listen(PORT, HOST, () => {
   console.log(`Rack Inventory Kiosk running. Data folder: ${DATA_DIR}`);
   console.log(`  On this machine:   http://localhost:${PORT}`);
-  for (const list of Object.values(os.networkInterfaces())) {
-    for (const a of list || []) if (a.family === 'IPv4' && !a.internal) console.log(`  On your network:   http://${a.address}:${PORT}`);
-  }
+  for (const u of lanUrls()) console.log(`  On your network:   ${u}`);
 });

@@ -192,7 +192,38 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
 .lock-box{background:var(--bad-soft);border:1px solid var(--bad);color:var(--bad);border-radius:12px;padding:14px 18px;font-weight:600;width:100%}
 .lock-box b{font-family:var(--f-mono);font-size:26px;display:block;margin-top:4px}
 @media (prefers-reduced-motion:reduce){.dots.shake{animation:none}}
+/* Labels (paper is always white, whatever the screen theme) */
+.label{width:2.25in;height:1.25in;padding:.07in .09in;box-sizing:border-box;display:flex;flex-direction:column;gap:.05in;background:#fff;color:#000;overflow:hidden;break-inside:avoid;page-break-inside:avoid}
+.l-top{display:flex;gap:.08in;flex:1;min-height:0}
+.l-qr{width:.74in;height:.74in;flex:none}
+.l-qr svg{width:100%;height:100%;display:block}
+.l-txt{min-width:0;display:flex;flex-direction:column;gap:.02in}
+.l-name{font:700 9.5pt/1.12 var(--f-body);overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.l-code{font:600 11pt/1 var(--f-mono);letter-spacing:.02em}
+.l-hint{font:500 6.5pt/1.1 var(--f-body);color:#444;margin-top:auto}
+.l-bar svg{width:100%;height:.26in;display:block}
+.lpreview{display:flex;justify-content:center;padding:14px;background:var(--surface-2);border-radius:12px;overflow-x:auto}
+.lpreview .label{box-shadow:0 1px 4px rgba(0,0,0,.25);border-radius:4px;flex:none}
+.picklist{display:flex;flex-direction:column;gap:2px;max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px}
+.picklist label{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;min-height:44px;cursor:pointer}
+.picklist label:hover{background:var(--surface-2)}
+.picklist input{width:20px;height:20px;flex:none;accent-color:var(--accent)}
+.picklist .pname{flex:1;min-width:0;overflow-wrap:anywhere}
+.picklist .pickall{border-bottom:1px solid var(--line);border-radius:8px 8px 0 0}
+.camvideo{width:100%;border-radius:12px;background:#000;aspect-ratio:4/3;object-fit:cover}
+#printArea{display:none}
+@media print{
+  body{background:#fff!important}
+  body>*:not(#printArea){display:none!important}
+  #printArea{display:block!important}
+  #printArea.fmt-roll .label{page-break-after:always;break-after:page}
+  #printArea.fmt-roll .label:last-child{page-break-after:auto;break-after:auto}
+  #printArea.fmt-sheet{display:grid!important;grid-template-columns:repeat(3,2.25in);gap:.2in .25in;justify-content:center}
+  #printArea.fmt-sheet .label{outline:1px dashed #999}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
 </style>
+<style id="pageSize">@page{size:2.25in 1.25in;margin:0}</style>
 </head>
 <body>
 <header>
@@ -206,6 +237,7 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
       <button class="tab" role="tab" id="tab-inventory" aria-selected="true" data-view="inventory">Inventory</button>
       <button class="tab" role="tab" id="tab-activity" aria-selected="false" data-view="activity">Activity</button>
     </nav>
+    <button class="btn" id="scanBtn" type="button" title="Scan a barcode"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M3 7V4h3M18 4h3v3M21 17v3h-3M6 20H3v-3"/><path d="M7 8v8M10 8v8M13 8v8M16.5 8v8"/></svg>Scan</button>
     <button class="btn" id="lockBtn" type="button" title="Lock this device"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Lock</button>
     <button class="btn primary" id="addBtn" type="button"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add item</button>
   </div>
@@ -218,8 +250,9 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
     <div class="tools">
       <div class="search">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input id="q" type="search" placeholder="Search items" autocomplete="off" aria-label="Search inventory">
+        <input id="q" type="search" placeholder="Search items or scan a barcode" autocomplete="off" aria-label="Search inventory">
       </div>
+      <button class="btn" type="button" id="labelsBtn">Print labels</button>
       <div class="field" style="flex:0 0 auto">
         <select id="sort" aria-label="Sort items">
           <option value="name">Sort: Name</option>
@@ -281,6 +314,9 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
     </div>
   </div>
 </div>
+<div id="printArea" aria-hidden="true"></div>
+<script src="/vendor/qrcode.js"></script>
+<script src="/vendor/JsBarcode.code128.min.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -11,6 +11,8 @@ the same network. Every device stays in sync live.
 - Export inventory and activity to CSV (opens in Excel or Google Sheets)
 - Add, edit or remove items, with photos taken right from a tablet's camera
 - PIN login, with a 30-minute lockout after 4 wrong PINs in a row
+- Barcode labels: every item gets its own code (RK-0001, RK-0002, …). After you add an item
+  it offers to print the label; scanning it later opens that item, ready to take out
 
 No database to install and no extra packages. Only [Node.js](https://nodejs.org) 18 or newer.
 
@@ -72,6 +74,41 @@ can't reach the server. It reconnects by itself once the server is back.
 If other devices can't connect, allow port 3000 through the server machine's firewall
 (Windows asks the first time Node.js starts; choose **Private networks**).
 
+## Barcode labels and scanning
+
+**Every item gets a barcode code** like `RK-0001`, assigned in order and never reused.
+Items added before barcodes existed get one automatically.
+
+**Printing.** After you add an item, the app shows its label and asks you to print it. You
+can also print from any item (**Print label**), or print many at once (**Print labels** on
+the Inventory screen). The list ticks items that still need a label and tracks which have
+been printed. Two layouts:
+
+- **Label printer, 2.25 × 1.25 in.** One label per page. Works with Dymo, Brother, Zebra and
+  Rollo printers. In the print dialog choose the 2.25 × 1.25 in label size and set margins
+  to none.
+- **Regular paper, Letter.** Labels laid out 3 across with cut lines.
+
+Each label has the item name, its code, a **QR code** and a regular **Code 128 barcode**.
+
+**Scanning** opens the item with **Take out** selected, so you only set the count and enter
+your name:
+
+- **USB or Bluetooth barcode scanner** (works like a keyboard): just scan, on any screen.
+  Nothing needs to be clicked first. Scanning on the PIN screen is ignored and never counts
+  as a wrong PIN.
+- **Phone camera:** point the camera app at the QR code. It opens the item on the server
+  (the phone must be on the same network and enter the PIN the first time).
+- **Scan button:** type a code by hand. On HTTPS setups in Chrome/Edge it can also use the
+  device's camera.
+
+**QR link address.** QR codes contain the server's address, such as
+`http://192.168.1.50:3000/i/RK-0001`. If you print from the server machine itself
+(`localhost`), the app fills in its network address. Give the server a fixed IP (a DHCP
+reservation on your router) so printed labels keep working, or set `PUBLIC_URL` to a
+hostname, for example `PUBLIC_URL=http://inventory.local:3000`. If the address changes,
+the regular barcodes keep working with scanners; only the phone-camera links need reprinting.
+
 ## Settings
 
 Set these as environment variables before starting:
@@ -85,6 +122,7 @@ Set these as environment variables before starting:
 | `MAX_PIN_ATTEMPTS` | `4` | Wrong PINs in a row before a lockout |
 | `LOCKOUT_MINUTES` | `30` | How long a lockout lasts |
 | `SESSION_HOURS` | `24` | How long a device stays logged in |
+| `PUBLIC_URL` | server's network IP | Address put into label QR codes |
 | `TRUST_PROXY` | off | Set to `1` only behind a reverse proxy, to read the real client IP |
 
 ## Your data
@@ -172,9 +210,18 @@ All routes except `/api/auth/*` need a logged-in session cookie (`POST /api/auth
 | `POST /api/items`                      | Add item `{name, qty, unit}`                         |
 | `PUT /api/items/:id`                   | Edit item `{name, unit, qty, person}`                |
 | `DELETE /api/items/:id`                | Remove item                                          |
+| `POST /api/labels-printed`             | Mark labels printed `{ids: [...]}`                   |
+| `GET /api/info`                        | Server address used in QR codes                      |
+| `GET /i/:code`                         | Opens the item with that barcode (QR code link)      |
 | `POST /api/items/:id/image`            | Upload photo (raw JPEG/PNG/WebP/GIF body)            |
 | `POST /api/items/:id/transactions`     | `{type: take\|return\|restock, qty, person, note}`   |
 | `GET /api/log?limit=1000`              | Latest activity, newest first                        |
 | `GET /api/events`                      | Live change notifications (Server-Sent Events)       |
 | `GET /api/export/inventory.csv`        | Inventory CSV                                        |
 | `GET /api/export/activity.csv`         | Activity CSV (`q`, `type`, `from`, `to` in ms)       |
+
+## Third-party code
+
+`public/vendor/` contains [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator)
+(MIT, © Kazuhiko Arase) and [JsBarcode](https://github.com/lindell/JsBarcode) Code 128
+(MIT, © Johan Lindell), bundled so labels print without an internet connection.

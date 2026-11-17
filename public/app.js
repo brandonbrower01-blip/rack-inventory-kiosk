@@ -31,6 +31,7 @@ async function refresh(){
   try{
     const [items,log]=await Promise.all([api('GET','/api/items'),api('GET','/api/log?limit=1000')]);
     S.items=items;S.log=log;S.loaded=true;
+    if(S.pendingCode){const c=S.pendingCode;S.pendingCode=null;try{history.replaceState(null,'','/'+location.hash)}catch(e){}setTimeout(()=>handleScan(c),0)}
     if(!S.online){S.online=true;notice('')}
   }catch(e){S.loaded=true;S.online=false;setLive(false);notice(e.message)}
   render();
@@ -64,7 +65,7 @@ const signed=e=>{const d=e.type==='adjust'?e.delta:(e.type==='take'?-e.qty:e.qty
 function renderInventory(){
   const outCount=S.items.filter(i=>(i.qty||0)<=0).length;
   const q=S.q.trim().toLowerCase();
-  const list=S.items.filter(i=>!q||String(i.name).toLowerCase().includes(q));
+  const list=S.items.filter(i=>!q||(String(i.name)+' '+(i.code||'')).toLowerCase().includes(q));
   const cmp={name:(a,b)=>String(a.name).localeCompare(b.name),low:(a,b)=>(a.qty||0)-(b.qty||0)}[S.sort];
   list.sort(cmp);
   $('#grid').innerHTML=list.map(it=>`<button class="card" data-id="${esc(it.id)}" type="button" aria-label="Open ${esc(it.name)}">
@@ -107,7 +108,7 @@ function render(){S.view==='inventory'?renderInventory():renderActivity()}
 /* ---------- Panels ---------- */
 function openPanel(html,label){const p=$('#panel');p.innerHTML=html;p.setAttribute('aria-label',label||'');$('#scrim').hidden=false;document.body.style.overflow='hidden';
   const f=p.querySelector('[autofocus]');if(f)setTimeout(()=>f.focus(),30)}
-function closePanel(){$('#scrim').hidden=true;$('#panel').innerHTML='';document.body.style.overflow='';S.openId=null}
+function closePanel(){if(S.stopCam){S.stopCam();S.stopCam=null}$('#scrim').hidden=true;$('#panel').innerHTML='';document.body.style.overflow='';S.openId=null}
 $('#scrim').addEventListener('click',e=>{if(e.target.id==='scrim')closePanel()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#scrim').hidden)closePanel()});
 
@@ -122,6 +123,7 @@ function openItem(id){
   <div class="phead">${thumbHTML(it)}
     <div style="min-width:0"><h2>${esc(it.name)}</h2>
       <div class="meta"><span>On hand <b id="onhand">${it.qty||0}</b> ${esc(it.unit||'pcs')}</span>${stockPill(it)}</div>
+      ${it.code?`<div class="meta" style="margin-top:4px"><span>Barcode <b>${esc(it.code)}</b></span></div>`:''}
     </div>
     <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button>
   </div>
@@ -149,7 +151,7 @@ function openItem(id){
     <button class="btn primary big" type="submit" id="txGo">Confirm</button>
   </form>
   ${hist.length?`<div class="hist"><span class="lbl">Recent for this item</span><ul>${hist.map(e=>`<li><span class="tag ${esc(e.type)}">${esc(TYPE_LABEL[e.type]||e.type)}</span><b class="num">${NO_QTY.has(e.type)?'':signed(e)}</b><span>${esc(e.person||'')}</span><span class="when">${esc(fmtWhen(e.at))}</span></li>`).join('')}</ul></div>`:''}
-  <div class="foot"><span></span><button class="btn" type="button" data-act="edit">Edit item</button></div>`,it.name);
+  <div class="foot"><button class="btn" type="button" data-act="label">Print label</button><button class="btn" type="button" data-act="edit">Edit item</button></div>`,it.name);
   const p=$('#panel');let mode='take';
   const qtyEl=p.querySelector('#txQty');
   const cur=()=>(S.items.find(i=>i.id===id)||it).qty||0;
@@ -165,6 +167,7 @@ function openItem(id){
   p.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
     if(b.dataset.act==='close')closePanel();
     else if(b.dataset.act==='edit')openEdit(id);
+    else if(b.dataset.act==='label')openLabels([id]);
     else if(b.dataset.mode){
       mode=b.dataset.mode==='take'?'take':p.querySelector('[data-kind][aria-pressed="true"]').dataset.kind;
       p.querySelectorAll('[data-mode]').forEach(x=>x.setAttribute('aria-pressed',x===b));p.querySelector('#retKind').hidden=b.dataset.mode==='take';upd()}
@@ -227,9 +230,10 @@ function openEdit(id){
     if(!isNew)body.person=v('#edWho');
     go.disabled=true;go.textContent='Saving…';
     try{
-      const saved=isNew?await api('POST','/api/items',body):await api('PUT','/api/items/'+id,body);
+      let saved=isNew?await api('POST','/api/items',body):await api('PUT','/api/items/'+id,body);
       if(pendingImage){try{await api('POST',`/api/items/${saved.id}/image`,pendingImage,pendingImage.type||'image/jpeg')}catch(err){toast('Saved, but the photo didn’t upload: '+err.message)}}
-      closePanel();toast(isNew?`Added ${name}`:'Saved');refresh();
+      await refresh();
+      if(isNew){openLabels([saved.id],{justAdded:true})}else{closePanel();toast('Saved')}
     }catch(err){toast(err.message);go.disabled=false;go.textContent=isNew?'Add to inventory':'Save changes'}
   });
 }
@@ -248,6 +252,7 @@ function setView(v){S.view=v;document.querySelectorAll('.tab').forEach(t=>t.setA
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>setView(t.dataset.view));
 window.addEventListener('hashchange',()=>setView(location.hash==='#activity'?'activity':'inventory'));
 $('#q').addEventListener('input',e=>{S.q=e.target.value;renderInventory()});
+$('#q').addEventListener('keydown',e=>{if(e.key==='Enter'&&parseCode(e.target.value)){e.preventDefault();const v=e.target.value;e.target.value='';S.q='';renderInventory();handleScan(v)}});
 $('#sort').addEventListener('change',e=>{S.sort=e.target.value;renderInventory()});
 $('#grid').addEventListener('click',e=>{const c=e.target.closest('.card');if(c)openItem(c.dataset.id)});
 ['#aq','#atype','#afrom','#ato'].forEach(s=>$(s).addEventListener('input',renderActivity));
@@ -303,6 +308,11 @@ function pressKey(k){
 }
 $('#keypad').addEventListener('click',e=>{const b=e.target.closest('[data-k]');if(b)pressKey(b.dataset.k)});
 document.addEventListener('keydown',e=>{if($('#login').hidden)return;
+  // A barcode scanner types letters (RK-0001 or a link) then Enter. Keep its digits out of the PIN
+  // so a scan never counts as a wrong PIN.
+  const now=Date.now();
+  if(e.key.length===1&&!/^\d$/.test(e.key)){L.scanUntil=now+400;L.pin='';drawDots();lmsg('Enter the PIN first, then scan.',true);e.preventDefault();return}
+  if(L.scanUntil&&now<L.scanUntil){L.scanUntil=now+400;e.preventDefault();return}
   if(/^\d$/.test(e.key))pressKey(e.key);else if(e.key==='Backspace')pressKey('del');else if(e.key==='Enter')pressKey('ok');});
 $('#lockBtn').onclick=async()=>{try{await api('POST','/api/auth/logout')}catch(e){}S.items=[];S.log=[];render();showLogin()};
 
@@ -330,6 +340,147 @@ function openChangePin(){
   });
 }
 $('#pinBtn').onclick=openChangePin;
+
+/* ---------- Barcodes & labels ---------- */
+function parseCode(text){
+  const t=String(text||'');
+  const m=t.match(/RK\W?(\d{3,8})/i);
+  return m?'RK-'+m[1]:null;
+}
+function handleScan(text){
+  const code=parseCode(text);
+  if(!code){toast('That barcode isn’t one of ours.');return}
+  const it=S.items.find(i=>String(i.code).toUpperCase()===code.toUpperCase());
+  if(!it){toast(`No item with barcode ${code}. It may have been removed.`);return}
+  if(S.view!=='inventory')setView('inventory');
+  closePanel();openItem(it.id);toast(`Scanned ${it.code}: ${it.name}`);
+}
+// Keyboard-style USB/Bluetooth scanners: a fast burst of keys ending in Enter, anywhere on the page.
+const SC={buf:'',last:0};
+document.addEventListener('keydown',e=>{
+  if(!$('#login').hidden)return;
+  const t=e.target,tag=t&&t.tagName;
+  if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT')return;
+  const now=Date.now();
+  if(now-SC.last>120)SC.buf='';
+  SC.last=now;
+  if(e.key==='Enter'){if(SC.buf.length>=4&&parseCode(SC.buf)){e.preventDefault();handleScan(SC.buf)}SC.buf='';return}
+  if(e.key.length===1&&!e.ctrlKey&&!e.metaKey&&!e.altKey)SC.buf+=e.key;
+});
+
+let serverUrl=null;
+async function labelBase(){
+  const h=location.hostname;
+  if(h&&h!=='localhost'&&h!=='127.0.0.1'&&h!=='[::1]')return location.origin;
+  if(!serverUrl){try{serverUrl=(await api('GET','/api/info')).url}catch(e){serverUrl=location.origin}}
+  return serverUrl;
+}
+function fitSvg(svg){
+  const w=parseFloat(svg.getAttribute('width')),h=parseFloat(svg.getAttribute('height'));
+  if(!svg.getAttribute('viewBox')&&w&&h)svg.setAttribute('viewBox',`0 0 ${w} ${h}`);
+  svg.removeAttribute('width');svg.removeAttribute('height');
+  return svg;
+}
+function qrSvg(text){
+  const q=qrcode(0,'M');q.addData(text);q.make();
+  const doc=new DOMParser().parseFromString(q.createSvgTag({cellSize:4,margin:0}),'image/svg+xml');
+  return fitSvg(doc.documentElement).outerHTML;
+}
+function code128Svg(text){
+  const el=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  JsBarcode(el,text,{format:'CODE128',displayValue:false,margin:0,height:60,width:2,background:'#ffffff',lineColor:'#000000'});
+  fitSvg(el);el.setAttribute('preserveAspectRatio','none');
+  return el.outerHTML;
+}
+function labelHTML(it,base){
+  return `<div class="label"><div class="l-top"><div class="l-qr">${qrSvg(base+'/i/'+it.code)}</div>
+    <div class="l-txt"><div class="l-name">${esc(it.name)}</div><div class="l-code">${esc(it.code)}</div><div class="l-hint">Scan to take or return</div></div></div>
+    <div class="l-bar">${code128Svg(it.code)}</div></div>`;
+}
+const pref={get(k,d){try{return localStorage.getItem(k)||d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+async function printLabels(ids,format){
+  const base=await labelBase();
+  const list=ids.map(id=>S.items.find(i=>i.id===id)).filter(Boolean);
+  if(!list.length){toast('Choose at least one item.');return false}
+  const area=$('#printArea');
+  area.className='fmt-'+format;
+  area.innerHTML=list.map(it=>labelHTML(it,base)).join('');
+  $('#pageSize').textContent=format==='sheet'?'@page{size:letter;margin:0.5in}':'@page{size:2.25in 1.25in;margin:0}';
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  window.print();
+  try{await api('POST','/api/labels-printed',{ids:list.map(i=>i.id)})}catch(e){}
+  refresh();
+  return true;
+}
+async function openLabels(ids,opts){
+  opts=opts||{};
+  const fmt=pref.get('labelFormat','roll');
+  const single=ids&&ids.length===1;
+  const base=await labelBase();
+  const pick=!ids;
+  const items=[...S.items].sort((a,b)=>String(a.name).localeCompare(b.name));
+  if(pick)ids=items.filter(i=>!i.labelPrintedAt).map(i=>i.id);
+  const one=single?S.items.find(i=>i.id===ids[0]):null;
+  openPanel(`<div class="phead"><div style="min-width:0"><h2>${opts.justAdded?'Item added. Print its label?':single?'Print label':'Print labels'}</h2>
+      <div class="meta">${opts.justAdded?'Stick the label on the shelf or bin. Scanning it opens this item.':single?'Scanning this label opens the item.':'One label per item. Items without a printed label are ticked.'}</div></div>
+    <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
+  <div class="stack">
+    ${one?`<div class="lpreview">${labelHTML(one,base)}</div>`:`<div class="picklist">
+      <label class="pickall"><input type="checkbox" id="pickAll"> <b>Select all</b> <span class="when" id="pickCount"></span></label>
+      ${items.map(i=>`<label><input type="checkbox" value="${esc(i.id)}" ${ids.includes(i.id)?'checked':''}> <span class="pname">${esc(i.name)}</span> <span class="when">${esc(i.code)}</span> ${i.labelPrintedAt?'<span class="pill okp">Printed</span>':'<span class="pill low">Needs label</span>'}</label>`).join('')||'<p class="summary">No items yet.</p>'}
+    </div>`}
+    <div class="field"><label for="lblFmt">Print on</label>
+      <select id="lblFmt"><option value="roll" ${fmt==='roll'?'selected':''}>Label printer, 2.25 × 1.25 in (one per label)</option>
+      <option value="sheet" ${fmt==='sheet'?'selected':''}>Regular paper, Letter (cut out labels)</option></select></div>
+    <button class="btn primary big" type="button" id="lblGo">${single?'Print label':'Print selected labels'}</button>
+    ${opts.justAdded?'<button class="btn ghost" type="button" data-act="close">Skip for now</button>':''}
+  </div>`,'Print labels');
+  const p=$('#panel');
+  p.querySelectorAll('[data-act=close]').forEach(b=>b.onclick=()=>{closePanel();if(opts.justAdded)toast(`Added ${one?one.name:'item'}. Print its label any time from the item.`)});
+  const boxes=()=>[...p.querySelectorAll('.picklist input[value]')];
+  const count=()=>{const c=boxes().filter(b=>b.checked).length;const pc=p.querySelector('#pickCount');if(pc)pc.textContent=`${c} selected`;const all=p.querySelector('#pickAll');if(all)all.checked=c&&c===boxes().length};
+  if(!one){p.querySelector('#pickAll').onchange=e=>{boxes().forEach(b=>b.checked=e.target.checked);count()};p.querySelector('.picklist').addEventListener('change',count);count()}
+  p.querySelector('#lblGo').onclick=async()=>{
+    const f=p.querySelector('#lblFmt').value;pref.set('labelFormat',f);
+    const chosen=one?[one.id]:boxes().filter(b=>b.checked).map(b=>b.value);
+    if(await printLabels(chosen,f)){closePanel();toast(chosen.length===1?'Label sent to the printer':`${chosen.length} labels sent to the printer`)}
+  };
+}
+
+/* ---------- Scan screen (scanner or camera) ---------- */
+function openScan(){
+  const canCam=('BarcodeDetector' in window)&&window.isSecureContext&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia;
+  openPanel(`<div class="phead"><div style="min-width:0"><h2>Scan a label</h2><div class="meta">Scan an item's barcode to take items out or put them back.</div></div>
+    <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
+  <form class="stack" id="scanForm" autocomplete="off">
+    <div class="field"><label for="scanInput">Scan now, or type the code</label>
+      <input id="scanInput" placeholder="RK-0001" autofocus autocapitalize="characters" spellcheck="false"></div>
+    <button class="btn primary big" type="submit">Find item</button>
+    ${canCam?`<button class="btn" type="button" id="camBtn">Use camera</button><video id="camVideo" class="camvideo" playsinline muted hidden></video>`
+      :`<p class="after">Using a phone? Point its camera app at the label's square QR code. Camera scanning inside this page needs the server set up with HTTPS.</p>`}
+  </form>`,'Scan a label');
+  const p=$('#panel');
+  p.querySelector('[data-act=close]').onclick=closePanel;
+  p.querySelector('#scanForm').addEventListener('submit',e=>{e.preventDefault();const v=p.querySelector('#scanInput').value;if(v.trim())handleScan(v)});
+  const cam=p.querySelector('#camBtn');
+  if(cam)cam.onclick=async()=>{
+    const video=p.querySelector('#camVideo');let stream,stop=false,raf;
+    try{
+      const det=new BarcodeDetector({formats:['qr_code','code_128']});
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+      video.srcObject=stream;video.hidden=false;await video.play();cam.hidden=true;
+      S.stopCam=()=>{stop=true;cancelAnimationFrame(raf);stream.getTracks().forEach(t=>t.stop())};
+      let lastTry=0;
+      const loop=async(t)=>{if(stop)return;
+        if(t-lastTry>250){lastTry=t;try{const codes=await det.detect(video);const hit=codes.find(c=>parseCode(c.rawValue));if(hit){handleScan(hit.rawValue);return}}catch(e){}}
+        raf=requestAnimationFrame(loop)};
+      raf=requestAnimationFrame(loop);
+    }catch(err){toast('Camera not available. Allow camera access, or use a scanner.');if(stream)stream.getTracks().forEach(t=>t.stop())}
+  };
+}
+$('#scanBtn').onclick=openScan;
+$('#labelsBtn').onclick=()=>openLabels(null);
+{const m=location.pathname.match(/^\/i\/([A-Za-z0-9-]{1,20})$/);if(m)S.pendingCode=m[1];}
 
 (async function boot(){
   drawDots();
