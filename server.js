@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const auth = require('./auth');
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -19,6 +20,18 @@ const MAX_IMAGE = 10 * 1024 * 1024;
 const MAX_JSON = 100 * 1024;
 
 fs.mkdirSync(UPLOADS, { recursive: true });
+
+/* ---------- Command-line tools ---------- */
+const args = process.argv.slice(2);
+if (args[0] === '--set-pin') {
+  auth.initPaths(DATA_DIR);
+  try { auth.setPin(String(args[1] || '')); console.log('PIN updated. Devices that are already logged in stay logged in.'); process.exit(0); }
+  catch (e) { console.error(e.message + '  Usage: node server.js --set-pin 1234'); process.exit(1); }
+}
+if (args[0] === '--unlock') {
+  auth.initPaths(DATA_DIR); auth.unlockAll();
+  console.log('All lockouts cleared. Restart the server if it is running.'); process.exit(0);
+}
 
 /* ---------- Storage ---------- */
 let items = [];
@@ -46,9 +59,9 @@ function addLog(entry) {
 /* ---------- Live updates (Server-Sent Events) ---------- */
 const clients = new Set();
 function broadcast() {
-  for (const res of clients) res.write('event: change\ndata: {}\n\n');
+  for (const res of clients) if (!res.writableEnded) res.write('event: change\ndata: {}\n\n');
 }
-setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 25000).unref();
+setInterval(() => { for (const res of clients) if (!res.writableEnded) res.write(': ping\n\n'); }, 25000).unref();
 
 /* ---------- Helpers ---------- */
 function send(res, status, body, headers = {}) {
@@ -81,7 +94,7 @@ async function readJSON(req) {
 }
 const str = (v, max = 200) => String(v == null ? '' : v).trim().slice(0, max);
 const int = (v) => { const n = Math.floor(Number(v)); return Number.isFinite(n) ? n : NaN; };
-const device = (req) => (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim();
+const device = (req) => (req.who ? (req.who.mac ? `${req.who.ip} (${req.who.mac})` : req.who.ip) : '');
 
 function csv(rows) {
   return rows.map((r) => r.map((v) => {
@@ -92,7 +105,8 @@ function csv(rows) {
     return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }).join(',')).join('\r\n') + '\r\n';
 }
-const TYPE_LABEL = { take: 'Taken', return: 'Returned', restock: 'Restocked', adjust: 'Count corrected', add: 'New item', remove: 'Item removed' };
+const TYPE_LABEL = { take: 'Taken', return: 'Returned', restock: 'Restocked', adjust: 'Count corrected', add: 'New item', remove: 'Item removed',
+  lockout: 'Device locked out', 'pin-changed': 'PIN changed' };
 const stamp = () => new Date().toISOString().slice(0, 10);
 
 function filterLog(q) {
@@ -128,10 +142,17 @@ async function handle(req, res) {
   const m = req.method;
   let match;
 
+  if (await auth.handleAuthRoute(req, res, url, { send, fail, readJSON, onEvent: securityEvent })) return;
+  if (p.startsWith('/api/') || p.startsWith('/uploads/')) {
+    req.who = await auth.requireSession(req, res, { send });
+    if (!req.who) return;
+  }
+
   if (p === '/api/events' && m === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     res.write('retry: 3000\n\n');
     clients.add(res);
+    res.on('error', () => clients.delete(res));
     req.on('close', () => clients.delete(res));
     return;
   }
@@ -258,6 +279,23 @@ const server = http.createServer((req, res) => {
     if (!err.status) console.error(err);
   });
 });
+
+function securityEvent(type, who) {
+  const where = who.mac ? `${who.ip} (${who.mac})` : who.ip;
+  addLog({ itemId: null, itemName: '', type, qty: 0, delta: 0, after: null, person: '',
+    note: type === 'lockout' ? 'Locked for wrong PIN attempts' : 'Kiosk PIN was changed; other devices were logged out', device: where });
+  console.log(`[security] ${TYPE_LABEL[type]} from ${where || 'unknown device'}`);
+  if (type === 'pin-changed') { for (const c of clients) c.end(); clients.clear(); }
+  broadcast();
+}
+
+auth.init(DATA_DIR, { onFirstPin: (pin) => {
+  console.log('\n  ==================================================');
+  console.log(`   First run. Your kiosk PIN is: ${pin}`);
+  console.log('   Change it in the app (Activity > Change PIN)');
+  console.log('   or run:  node server.js --set-pin 1234');
+  console.log('  ==================================================\n');
+} });
 
 server.listen(PORT, HOST, () => {
   console.log(`Rack Inventory Kiosk running. Data folder: ${DATA_DIR}`);

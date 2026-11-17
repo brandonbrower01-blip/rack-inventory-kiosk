@@ -125,6 +125,8 @@ td.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:n
 .tag{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 8px;border-radius:4px;white-space:nowrap}
 .tag.take{background:var(--beam-soft);color:var(--beam)}
 .tag.return,.tag.restock,.tag.add{background:var(--ok-soft);color:var(--ok)}
+.tag.lockout{background:var(--bad-soft);color:var(--bad)}
+.tag.pin-changed{background:var(--accent-soft);color:var(--accent)}
 .tag.adjust{background:var(--accent-soft);color:var(--accent)}
 .when{white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums}
 
@@ -170,6 +172,26 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
 .live{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--muted)}
 .live i{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
 .live.off i{background:var(--bad);box-shadow:0 0 0 3px var(--bad-soft)}
+.login{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:auto;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.lcard{width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center}
+.lcard h2{font-family:var(--f-display);font-size:30px;text-transform:uppercase;margin:0}
+.lcard p{margin:0;color:var(--muted)}
+.dots{display:flex;gap:14px;height:22px;align-items:center}
+.dots i{width:16px;height:16px;border-radius:50%;border:2px solid var(--muted)}
+.dots i.on{background:var(--fg);border-color:var(--fg)}
+.dots.shake{animation:shake .35s}
+@keyframes shake{20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
+.keypad{display:grid;grid-template-columns:repeat(3,76px);gap:14px;justify-content:center}
+.keypad button{width:76px;height:76px;border-radius:50%;border:1.5px solid var(--accent);background:var(--surface);color:var(--fg);font-family:var(--f-mono);font-size:28px;font-weight:500;display:grid;place-items:center;padding:0}
+.keypad button:hover:not(:disabled){background:var(--accent-soft)}
+.keypad button.k-ok,.keypad button.k-ok:hover:not(:disabled){background:var(--accent);color:var(--accent-fg)}
+.keypad button.k-del{border-color:var(--line);color:var(--muted)}
+.keypad button:disabled{opacity:.35;cursor:not-allowed}
+.lmsg{min-height:44px;font-weight:600}
+.lmsg.err{color:var(--bad)}
+.lock-box{background:var(--bad-soft);border:1px solid var(--bad);color:var(--bad);border-radius:12px;padding:14px 18px;font-weight:600;width:100%}
+.lock-box b{font-family:var(--f-mono);font-size:26px;display:block;margin-top:4px}
+@media (prefers-reduced-motion:reduce){.dots.shake{animation:none}}
 </style>
 </head>
 <body>
@@ -184,6 +206,7 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
       <button class="tab" role="tab" id="tab-inventory" aria-selected="true" data-view="inventory">Inventory</button>
       <button class="tab" role="tab" id="tab-activity" aria-selected="false" data-view="activity">Activity</button>
     </nav>
+    <button class="btn" id="lockBtn" type="button" title="Lock this device"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Lock</button>
     <button class="btn primary" id="addBtn" type="button"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add item</button>
   </div>
 </header>
@@ -222,12 +245,13 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
     <div class="filters">
       <div class="field" style="flex:1 1 220px"><label for="aq">Search</label><input id="aq" type="search" placeholder="Person, item or note"></div>
       <div class="field"><label for="atype">Type</label>
-        <select id="atype"><option value="">All</option><option value="take">Taken</option><option value="return">Returned</option><option value="restock">Restocked</option><option value="adjust">Count corrected</option><option value="add">New item</option><option value="remove">Item removed</option></select></div>
+        <select id="atype"><option value="">All</option><option value="take">Taken</option><option value="return">Returned</option><option value="restock">Restocked</option><option value="adjust">Count corrected</option><option value="add">New item</option><option value="remove">Item removed</option><option value="lockout">Device locked out</option><option value="pin-changed">PIN changed</option></select></div>
       <div class="field"><label for="afrom">From</label><input id="afrom" type="date"></div>
       <div class="field"><label for="ato">To</label><input id="ato" type="date"></div>
     </div>
     <div class="tools">
       <p class="summary" id="asummary" style="margin:0;margin-right:auto"></p>
+      <button class="btn ghost" type="button" id="pinBtn">Change PIN</button>
       <button class="btn" type="button" id="expInv">Export inventory (CSV)</button>
       <button class="btn primary" type="button" id="expLog">Export activity (CSV)</button>
     </div>
@@ -241,6 +265,22 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
 <div class="scrim" id="scrim" hidden><div class="panel" id="panel" role="dialog" aria-modal="true"></div></div>
 <div class="toast" id="toast" hidden></div>
 
+<div class="login" id="login" hidden>
+  <div class="lcard">
+    <svg width="44" height="44" viewBox="0 0 34 34" aria-hidden="true"><rect x="3" y="3" width="4" height="28" fill="var(--accent)"/><rect x="27" y="3" width="4" height="28" fill="var(--accent)"/><rect x="7" y="10" width="20" height="3" fill="var(--beam)"/><rect x="7" y="21" width="20" height="3" fill="var(--beam)"/><rect x="10" y="5" width="6" height="5" fill="var(--muted)"/><rect x="18" y="15" width="7" height="6" fill="var(--muted)"/></svg>
+    <h2>Rack Inventory</h2>
+    <p id="lsub">Enter the kiosk PIN</p>
+    <div class="dots" id="dots" aria-hidden="true"></div>
+    <div class="lmsg" id="lmsg" role="status" aria-live="polite"></div>
+    <div id="lockBox" class="lock-box" hidden>Too many wrong PINs. This device is locked.<b id="lockTime">30:00</b></div>
+    <div class="keypad" id="keypad" role="group" aria-label="PIN keypad">
+      <button type="button" data-k="1">1</button><button type="button" data-k="2">2</button><button type="button" data-k="3">3</button>
+      <button type="button" data-k="4">4</button><button type="button" data-k="5">5</button><button type="button" data-k="6">6</button>
+      <button type="button" data-k="7">7</button><button type="button" data-k="8">8</button><button type="button" data-k="9">9</button>
+      <button type="button" data-k="del" class="k-del" aria-label="Delete">⌫</button><button type="button" data-k="0">0</button><button type="button" data-k="ok" class="k-ok" aria-label="Unlock">✓</button>
+    </div>
+  </div>
+</div>
 <script src="/app.js"></script>
 </body>
 </html>

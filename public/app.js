@@ -3,7 +3,8 @@
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const S={items:[],log:[],loaded:false,online:true,view:'inventory',q:'',sort:'name',openId:null};
-const TYPE_LABEL={take:'Taken',return:'Returned',restock:'Restocked',adjust:'Count corrected',add:'New item',remove:'Item removed'};
+const TYPE_LABEL={take:'Taken',return:'Returned',restock:'Restocked',adjust:'Count corrected',add:'New item',remove:'Item removed',lockout:'Device locked out','pin-changed':'PIN changed'};
+const NO_QTY=new Set(['remove','lockout','pin-changed']);
 
 const MINUS='<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="8.5" width="14" height="3" rx="1" fill="currentColor"/></svg>';
 const PLUS='<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="8.5" width="14" height="3" rx="1" fill="currentColor"/><rect x="8.5" y="3" width="3" height="14" rx="1" fill="currentColor"/></svg>';
@@ -19,7 +20,11 @@ async function api(method,url,body,contentType){
   let res;
   try{res=await fetch(url,opt)}catch(e){throw new Error('Can’t reach the inventory server. Check that it’s running and on the network.')}
   let data=null;try{data=await res.json()}catch(e){}
-  if(!res.ok)throw new Error((data&&data.error)||('Server error ('+res.status+')'));
+  if(!url.startsWith('/api/auth/')){
+    if(res.status===401){showLogin();throw new Error('Enter the PIN to continue.')}
+    if(res.status===423){showLogin(data);throw new Error('This device is locked.')}
+  }
+  if(!res.ok){const err=new Error((data&&data.error)||('Server error ('+res.status+')'));err.status=res.status;err.data=data;throw err}
   return data;
 }
 async function refresh(){
@@ -34,11 +39,14 @@ async function refresh(){
 let refreshTimer=null;
 function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(refresh,150)}
 function connectLive(){
-  if(!window.EventSource){setInterval(refresh,10000);return}
-  const es=new EventSource('/api/events');
+  if(S.es)S.es.close();
+  if(!window.EventSource){clearInterval(S.poll);S.poll=setInterval(refresh,10000);return}
+  const es=S.es=new EventSource('/api/events');
   es.addEventListener('change',scheduleRefresh);
   es.onopen=()=>{setLive(true);refresh()};
-  es.onerror=()=>{setLive(false);if(S.online){S.online=false;notice('Lost connection to the inventory server. Reconnecting…')}};
+  es.onerror=()=>{setLive(false);if(S.online){S.online=false;notice('Lost connection to the inventory server. Reconnecting…')}
+    // A closed stream can mean this device was logged out or locked; check.
+    api('GET','/api/auth/status').then(st=>{if(!st.loggedIn||st.lockedUntil)showLogin(st)}).catch(()=>{})};
 }
 
 /* ---------- Helpers ---------- */
@@ -88,8 +96,8 @@ function renderActivity(){
   $('#logBody').innerHTML=rows.length?rows.map(e=>`<tr>
     <td class="when">${esc(fmtWhen(e.at))}</td><td>${esc(e.person||'—')}</td>
     <td><span class="tag ${esc(e.type)}">${esc(TYPE_LABEL[e.type]||e.type)}</span></td>
-    <td class="num">${e.type==='remove'?'':signed(e)}</td>
-    <td>${esc(e.itemName)}</td><td class="num">${e.after!=null?esc(e.after):''}</td><td>${esc(e.note||'')}</td></tr>`).join('')
+    <td class="num">${NO_QTY.has(e.type)?'':signed(e)}</td>
+    <td>${esc(e.itemName||'—')}</td><td class="num">${e.after!=null?esc(e.after):''}</td><td>${esc(e.note||'')}${e.type==='lockout'&&e.device?` <span class="when">${esc(e.device)}</span>`:''}</td></tr>`).join('')
     :`<tr><td colspan="7" style="color:var(--muted);padding:24px 12px">${S.log.length?'No activity matches these filters.':'Nothing logged yet. Every take, return and restock shows up here.'}</td></tr>`;
   const taken=rows.filter(e=>e.type==='take').reduce((s,e)=>s+e.qty,0);
   $('#asummary').textContent=`${rows.length} entries${taken?` · ${taken} units taken`:''}`+(S.log.length>=1000?' · showing latest 1,000 (export includes everything)':'');
@@ -140,7 +148,7 @@ function openItem(id){
     <div class="field"><label for="txNote">Note or job (optional)</label><input id="txNote" placeholder="e.g. Job #4410, van 3, broken"></div>
     <button class="btn primary big" type="submit" id="txGo">Confirm</button>
   </form>
-  ${hist.length?`<div class="hist"><span class="lbl">Recent for this item</span><ul>${hist.map(e=>`<li><span class="tag ${esc(e.type)}">${esc(TYPE_LABEL[e.type]||e.type)}</span><b class="num">${e.type==='remove'?'':signed(e)}</b><span>${esc(e.person||'')}</span><span class="when">${esc(fmtWhen(e.at))}</span></li>`).join('')}</ul></div>`:''}
+  ${hist.length?`<div class="hist"><span class="lbl">Recent for this item</span><ul>${hist.map(e=>`<li><span class="tag ${esc(e.type)}">${esc(TYPE_LABEL[e.type]||e.type)}</span><b class="num">${NO_QTY.has(e.type)?'':signed(e)}</b><span>${esc(e.person||'')}</span><span class="when">${esc(fmtWhen(e.at))}</span></li>`).join('')}</ul></div>`:''}
   <div class="foot"><span></span><button class="btn" type="button" data-act="edit">Edit item</button></div>`,it.name);
   const p=$('#panel');let mode='take';
   const qtyEl=p.querySelector('#txQty');
@@ -245,5 +253,88 @@ $('#grid').addEventListener('click',e=>{const c=e.target.closest('.card');if(c)o
 ['#aq','#atype','#afrom','#ato'].forEach(s=>$(s).addEventListener('input',renderActivity));
 $('#addBtn').onclick=()=>openEdit(null);$('#emptyAdd').onclick=()=>openEdit(null);
 setView(location.hash==='#activity'?'activity':'inventory');
-refresh();connectLive();
+
+/* ---------- PIN login ---------- */
+const L={pin:'',busy:false,lockedUntil:null,timer:null,shown:false};
+const PIN_MAX=8;
+function drawDots(){const n=Math.max(4,L.pin.length);$('#dots').innerHTML=Array.from({length:Math.min(PIN_MAX,n)},(_,i)=>`<i class="${i<L.pin.length?'on':''}"></i>`).join('')}
+function lmsg(text,err){const m=$('#lmsg');m.textContent=text||'';m.className='lmsg'+(err?' err':'')}
+function setKeypad(enabled){document.querySelectorAll('#keypad button').forEach(b=>b.disabled=!enabled)}
+function showLogin(st){
+  closePanel();
+  if(S.es){S.es.close();S.es=null}
+  clearInterval(S.poll);setLive(false);
+  if(!L.shown){L.shown=true;L.pin='';lmsg('');drawDots()}
+  $('#login').hidden=false;document.body.style.overflow='hidden';
+  if(st&&st.lockedUntil)startLock(st.lockedUntil,st.now);
+  else if(!L.lockedUntil){setKeypad(true);$('#lockBox').hidden=true;
+    if(st&&st.attemptsLeft!=null&&st.maxAttempts&&st.attemptsLeft<st.maxAttempts)lmsg(`${st.attemptsLeft} ${st.attemptsLeft===1?'try':'tries'} left before lockout`,true)}
+}
+function hideLogin(){L.shown=false;L.pin='';$('#login').hidden=true;document.body.style.overflow='';stopLock()}
+function startLock(until,serverNow){
+  const skew=serverNow?Date.now()-serverNow:0;L.lockedUntil=until+skew;L.pin='';drawDots();lmsg('');
+  setKeypad(false);$('#lockBox').hidden=false;$('#lsub').textContent='Locked';
+  clearInterval(L.timer);
+  const tick=()=>{const ms=L.lockedUntil-Date.now();
+    if(ms<=0){stopLock();api('GET','/api/auth/status').then(showLogin).catch(()=>showLogin());return}
+    const m=Math.floor(ms/60000),sec=Math.floor(ms/1000)%60;$('#lockTime').textContent=`${m}:${String(sec).padStart(2,'0')}`};
+  tick();L.timer=setInterval(tick,1000);
+}
+function stopLock(){clearInterval(L.timer);L.lockedUntil=null;$('#lockBox').hidden=true;$('#lsub').textContent='Enter the kiosk PIN';setKeypad(true)}
+async function submitPin(){
+  if(L.busy||L.lockedUntil)return;
+  if(L.pin.length<4){lmsg('PIN is 4 to 8 digits',true);return}
+  L.busy=true;setKeypad(false);lmsg('Checking…');
+  try{await api('POST','/api/auth/login',{pin:L.pin});hideLogin();await refresh();connectLive()}
+  catch(err){
+    L.pin='';drawDots();const d=$('#dots');d.classList.remove('shake');void d.offsetWidth;d.classList.add('shake');
+    if(err.status===423&&err.data){startLock(err.data.lockedUntil,err.data.now)}
+    else{setKeypad(true);lmsg(err.message,true)}
+  }
+  L.busy=false;
+}
+function pressKey(k){
+  if(L.busy||L.lockedUntil)return;
+  if(k==='del')L.pin=L.pin.slice(0,-1);
+  else if(k==='ok'){submitPin();return}
+  else if(/^\d$/.test(k)&&L.pin.length<PIN_MAX)L.pin+=k;
+  if(!$('#lmsg').classList.contains('err')||L.pin)lmsg('');
+  drawDots();
+}
+$('#keypad').addEventListener('click',e=>{const b=e.target.closest('[data-k]');if(b)pressKey(b.dataset.k)});
+document.addEventListener('keydown',e=>{if($('#login').hidden)return;
+  if(/^\d$/.test(e.key))pressKey(e.key);else if(e.key==='Backspace')pressKey('del');else if(e.key==='Enter')pressKey('ok');});
+$('#lockBtn').onclick=async()=>{try{await api('POST','/api/auth/logout')}catch(e){}S.items=[];S.log=[];render();showLogin()};
+
+function openChangePin(){
+  openPanel(`<div class="phead"><div style="min-width:0"><h2>Change PIN</h2><div class="meta">Every other device will be logged out and need the new PIN.</div></div>
+    <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
+  <form class="stack" id="pinForm" autocomplete="off">
+    <div class="field"><label for="pinCur">Current PIN</label><input id="pinCur" type="password" inputmode="numeric" pattern="\\d{4,8}" maxlength="8" required autofocus></div>
+    <div class="row2">
+      <div class="field"><label for="pinNew">New PIN (4–8 digits)</label><input id="pinNew" type="password" inputmode="numeric" pattern="\\d{4,8}" maxlength="8" required></div>
+      <div class="field"><label for="pinNew2">Repeat new PIN</label><input id="pinNew2" type="password" inputmode="numeric" pattern="\\d{4,8}" maxlength="8" required></div>
+    </div>
+    <div class="after err" id="pinErr"></div>
+    <button class="btn primary big" type="submit" id="pinGo">Change PIN</button>
+  </form>`,'Change PIN');
+  const p=$('#panel');p.querySelector('[data-act=close]').onclick=closePanel;
+  p.querySelector('#pinForm').addEventListener('submit',async e=>{e.preventDefault();
+    const cur=p.querySelector('#pinCur').value,n1=p.querySelector('#pinNew').value,n2=p.querySelector('#pinNew2').value,er=p.querySelector('#pinErr');
+    if(!/^\d{4,8}$/.test(n1)){er.textContent='New PIN must be 4 to 8 digits.';return}
+    if(n1!==n2){er.textContent='The new PINs don’t match.';return}
+    const go=p.querySelector('#pinGo');go.disabled=true;
+    try{await api('POST','/api/auth/change-pin',{current:cur,next:n1});closePanel();toast('PIN changed. Other devices were logged out.');connectLive();refresh()}
+    catch(err){go.disabled=false;
+      if(err.status===423&&err.data){showLogin(err.data)}else{er.textContent=err.message;p.querySelector('#pinCur').value='';p.querySelector('#pinCur').focus()}}
+  });
+}
+$('#pinBtn').onclick=openChangePin;
+
+(async function boot(){
+  drawDots();
+  try{const st=await api('GET','/api/auth/status');
+    if(st.loggedIn&&!st.lockedUntil){await refresh();connectLive()}else{S.loaded=true;render();showLogin(st)}}
+  catch(e){S.loaded=true;S.online=false;setLive(false);notice(e.message);render()}
+})();
 })();

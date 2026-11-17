@@ -6,3 +6,6 @@ services:
     volumes:
       - ./data:/data
     restart: unless-stopped
+    # Linux only: lets the server see each device's real IP and MAC address for PIN lockouts.
+    # When enabled, remove the "ports" section above.
+    # network_mode: host
