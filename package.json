@@ -1,0 +1,14 @@
+{
+  "name": "rack-inventory-kiosk",
+  "version": "1.0.0",
+  "description": "Self-hosted, touch-friendly kiosk for tracking what's taken from storage racks. Every browser on the network stays in sync.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "private": true
+}
