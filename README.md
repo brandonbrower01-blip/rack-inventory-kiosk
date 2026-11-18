@@ -90,8 +90,10 @@ been printed. Two layouts:
   to none.
 - **Regular paper, Letter.** Labels laid out 3 across with cut lines.
 
-Item labels have the name (up to 2 lines), a **Code 128 barcode** and the code in plain text.
-Printer labels have the model and serial number instead of the name. So the bars stay wide and
+Every label has the same layout: a bold top line, a regular second line, a **Code 128
+barcode**, and the code in plain text. Item labels put the name on the bold line; a long name
+continues on the second line. Printer labels put the model on the bold line and the serial
+number on the second line, never the printer's name. So the bars stay wide and
 easy to scan, the barcode holds a 6-digit number
 instead of the letters: `100001` is item `RK-0001`, `200001` is printer `PR-0001`. The app
 understands both, so labels printed before this change still work. (If you scan a label into

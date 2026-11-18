@@ -403,6 +403,17 @@ const LABEL_BAR_MAX_IN=1.76;
 const MODULE_SIZES=[0.0197,0.0148,0.00985];
 // Shrink single-line label text until it fits (down to 70% of its size), so serial numbers aren't cut off.
 function fitLabelText(root){
+  // Item names: as many words as fit go on the bold first line; the rest moves to the regular second line.
+  root.querySelectorAll('.l-split').forEach(first=>{
+    const second=first.nextElementSibling;
+    const words=(first.dataset.full||first.textContent).trim().split(/\s+/);
+    first.dataset.full=words.join(' ');
+    let n=words.length;
+    first.textContent=words.join(' ');
+    while(n>1&&first.scrollWidth>first.clientWidth+0.5){n--;first.textContent=words.slice(0,n).join(' ')}
+    const rest=words.slice(n).join(' ');
+    second.textContent=rest;second.hidden=!rest;
+  });
   root.querySelectorAll('.l-fit').forEach(el=>{
     el.style.fontSize='';
     const base=parseFloat(getComputedStyle(el).fontSize);let px=base;
@@ -424,7 +435,7 @@ function labelHTML(it){
   if(String(it.code).startsWith('PR-'))return `<div class="label"><div class="l-name l-fit">${esc(it.model||'Label printer')}</div>
     ${it.serial?`<div class="l-sub l-fit">S/N ${esc(it.serial)}</div>`:''}
     <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;
-  return `<div class="label"><div class="l-name">${esc(it.name)}</div>
+  return `<div class="label"><div class="l-name l-fit l-split">${esc(it.name)}</div><div class="l-sub l-fit" hidden></div>
     <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;
 }
 const pref={get(k,d){try{return localStorage.getItem(k)||d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
