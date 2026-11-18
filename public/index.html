@@ -224,6 +224,20 @@ tr.click:hover td{background:var(--surface-2)}
 .rlist .rd{font-family:var(--f-mono);font-size:13px;color:var(--muted);white-space:nowrap}
 .rlist .rx{font-size:14px;color:var(--muted);grid-column:2;overflow-wrap:anywhere}
 .money{font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.partrows{display:flex;flex-direction:column;gap:8px}
+.partrows:empty{display:none}
+.partrow{display:flex;gap:8px;align-items:center}
+.partrow select{flex:1;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:10px;min-height:44px;font-size:15px}
+.pstep{display:flex;align-items:center;gap:6px;flex:none}
+.pstep button{width:38px;height:38px;border-radius:50%;border:1.5px solid var(--accent);background:var(--surface);color:var(--accent);display:grid;place-items:center;padding:0}
+.pstep button svg{width:16px;height:16px}
+.pstep button:disabled{opacity:.3;cursor:not-allowed}
+.pq{min-width:32px;text-align:center;font-family:var(--f-mono);font-size:18px;font-weight:600}
+.premove{width:40px;min-height:40px;padding:0;flex:none}
+.retparts{display:flex;gap:8px;align-items:center;margin-top:8px;font-weight:600}
+.retparts input{width:18px;height:18px;flex:none}
+@media (max-width:460px){.partrow{flex-wrap:wrap}.partrow select{flex:1 1 100%}}
+.l-sub{font:500 7.5pt/1.1 var(--f-body);color:#333;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:none}
 #printArea{display:none}
 @media print{
   body{background:#fff!important}
@@ -313,6 +327,7 @@ tr.click:hover td{background:var(--surface-2)}
       <div class="field"><label for="rType">Repair type</label><select id="rType"><option value="">All types</option></select></div>
       <span style="flex:1"></span>
       <button class="btn" type="button" id="addPrinterBtn">Add printer</button>
+      <button class="btn" type="button" id="printerLabelsBtn">Print printer labels</button>
       <button class="btn" type="button" id="expRepairs">Export (CSV)</button>
       <button class="btn primary" type="button" id="logRepairBtn">Log a repair</button>
     </div>

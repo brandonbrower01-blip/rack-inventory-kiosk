@@ -69,6 +69,16 @@ function nextCode() {
   for (const i of items) { const n = Number(String(i.code || '').slice(CODE_PREFIX.length)); if (n > max) max = n; }
   return CODE_PREFIX + String(max + 1).padStart(4, '0');
 }
+// Label printers get their own codes (PR-0001...), so a label stuck on a printer opens its repair history.
+function nextPrinterCode() {
+  let max = 0;
+  for (const x of printers) { const n = Number(String(x.code || '').slice(3)); if (n > max) max = n; }
+  return 'PR-' + String(max + 1).padStart(4, '0');
+}
+if (printers.some((x) => !x.code)) {
+  for (const x of [...printers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))) if (!x.code) x.code = nextPrinterCode();
+  saveList(PRINTERS_FILE, printers);
+}
 // Give items created before barcodes existed a code of their own.
 if (items.some((i) => !i.code)) {
   for (const i of [...items].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))) if (!i.code) i.code = nextCode();
@@ -244,9 +254,13 @@ async function handle(req, res) {
     const b = await readJSON(req);
     const ids = new Set(Array.isArray(b.ids) ? b.ids.map(String) : []);
     const now = Date.now();
-    let n = 0;
+    let n = 0, np = 0;
     for (const i of items) if (ids.has(i.id)) { i.labelPrintedAt = now; n++; }
-    if (n) { saveItems(); broadcast(); }
+    for (const x of printers) if (ids.has(x.id)) { x.labelPrintedAt = now; np++; }
+    if (n) saveItems();
+    if (np) saveList(PRINTERS_FILE, printers);
+    if (n || np) broadcast();
+    n += np;
     return send(res, 200, { updated: n });
   }
 
@@ -292,7 +306,7 @@ async function handle(req, res) {
     const f = printerFields(await readJSON(req));
     if (!f.name) return fail(res, 400, 'Give the printer a name, like "Front desk Dymo".');
     const now = Date.now();
-    const pr = Object.assign({ id: newId() }, f, { createdAt: now, updatedAt: now });
+    const pr = Object.assign({ id: newId(), code: nextPrinterCode() }, f, { createdAt: now, updatedAt: now });
     printers.push(pr); saveList(PRINTERS_FILE, printers); broadcast();
     return send(res, 201, pr);
   }
@@ -317,6 +331,50 @@ async function handle(req, res) {
   }
 
   /* ----- Repairs ----- */
+  // Parts taken from inventory for a repair. Every quantity is checked before anything changes,
+  // so a repair either saves with all its parts taken out of stock, or not at all.
+  const badRequest = (msg) => Object.assign(new Error(msg), { status: 400 });
+  function partsMap(raw) {
+    const map = new Map();
+    if (raw == null) return map;
+    if (!Array.isArray(raw) || raw.length > 50) throw badRequest('Parts list is not valid.');
+    for (const x of raw) {
+      const id = String(x && x.itemId || ''), q = int(x && x.qty);
+      if (!/^[a-f0-9]{16}$/.test(id) || !(q >= 1 && q <= 100000)) throw badRequest('Each part needs an item and a quantity of 1 or more.');
+      map.set(id, (map.get(id) || 0) + q);
+    }
+    return map;
+  }
+  function applyParts(oldParts, newMap, { person, note, repairId }) {
+    const oldMap = new Map((oldParts || []).map((x) => [x.itemId, x.qty]));
+    const changes = [];
+    for (const id of new Set([...oldMap.keys(), ...newMap.keys()])) {
+      const delta = (newMap.get(id) || 0) - (oldMap.get(id) || 0); // > 0 takes more out, < 0 puts back
+      if (!delta) continue;
+      const item = items.find((i) => i.id === id);
+      if (!item) {
+        const old = (oldParts || []).find((x) => x.itemId === id);
+        throw badRequest(`${old ? old.itemName : 'A part'} is no longer in inventory, so its quantity can't be changed.`);
+      }
+      if (delta > 0 && item.qty < delta) throw Object.assign(new Error(`Only ${item.qty} ${item.unit} of ${item.name} on hand.`), { status: 409 });
+      changes.push({ item, delta });
+    }
+    if (changes.some((c) => c.delta > 0) && !person) throw badRequest('Enter who did the repair. They are recorded as taking the parts.');
+    for (const { item, delta } of changes) {
+      item.qty -= delta; item.updatedAt = Date.now();
+      addLog({ itemId: item.id, itemCode: item.code, itemName: item.name, type: delta > 0 ? 'take' : 'return', qty: Math.abs(delta),
+        delta: -delta, after: item.qty, person, note: delta > 0 ? note.take : note.back, device: device(req), repairId });
+    }
+    if (changes.length) saveItems();
+    const parts = [];
+    for (const [id, qty] of newMap) {
+      const item = items.find((i) => i.id === id);
+      const old = (oldParts || []).find((x) => x.itemId === id);
+      parts.push(item ? { itemId: id, itemCode: item.code, itemName: item.name, unit: item.unit, qty } : old);
+    }
+    return parts;
+  }
+
   if (p === '/api/repairs' && m === 'GET') return send(res, 200, repairs);
   if (p === '/api/repairs' && m === 'POST') {
     const b = await readJSON(req);
@@ -326,7 +384,10 @@ async function handle(req, res) {
     if (!isDate(f.date)) return fail(res, 400, 'Enter the date of the repair.');
     if (!f.type) return fail(res, 400, 'Choose the type of repair.');
     const now = Date.now();
-    const r = Object.assign({ id: newId(), printerId: pr.id, printerName: pr.name }, f, { createdAt: now, updatedAt: now, device: device(req) });
+    const id = newId();
+    const inventoryParts = applyParts([], partsMap(b.inventoryParts), { person: f.doneBy, repairId: id,
+      note: { take: `Used to repair ${pr.name}: ${f.type}` } });
+    const r = Object.assign({ id, printerId: pr.id, printerName: pr.name }, f, { inventoryParts, createdAt: now, updatedAt: now, device: device(req) });
     repairs.push(r); saveList(REPAIRS_FILE, repairs); broadcast();
     return send(res, 201, r);
   }
@@ -339,12 +400,23 @@ async function handle(req, res) {
       if (!isDate(f.date)) return fail(res, 400, 'Enter the date of the repair.');
       if (!f.type) return fail(res, 400, 'Choose the type of repair.');
       const pr = printers.find((x) => x.id === String(b.printerId));
+      const name = pr ? pr.name : r.printerName;
+      if (b.inventoryParts !== undefined) {
+        r.inventoryParts = applyParts(r.inventoryParts, partsMap(b.inventoryParts), { person: f.doneBy, repairId: r.id,
+          note: { take: `Used to repair ${name}: ${f.type}`, back: `Put back after editing the ${name} repair` } });
+      }
       if (pr) { r.printerId = pr.id; r.printerName = pr.name; r.printerRemoved = false; }
       Object.assign(r, f, { updatedAt: Date.now() });
       saveList(REPAIRS_FILE, repairs); broadcast();
       return send(res, 200, r);
     }
     if (m === 'DELETE') {
+      if (url.searchParams.get('returnParts') === '1' && (r.inventoryParts || []).length) {
+        // Put back only parts whose item still exists.
+        const keep = (r.inventoryParts || []).filter((x) => !items.some((i) => i.id === x.itemId));
+        applyParts(r.inventoryParts, new Map(keep.map((x) => [x.itemId, x.qty])), { person: r.doneBy, repairId: r.id,
+          note: { back: `Put back: ${r.printerName} repair record was deleted` } });
+      }
       repairs = repairs.filter((x) => x !== r); saveList(REPAIRS_FILE, repairs); broadcast();
       return send(res, 200, { ok: true });
     }
@@ -353,9 +425,10 @@ async function handle(req, res) {
     const pid = str(url.searchParams.get('printer')), type = str(url.searchParams.get('type'));
     const rows = repairs.filter((r) => (!pid || r.printerId === pid) && (!type || r.type === type))
       .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
-    const out = [['Date', 'Printer', 'Model', 'Serial', 'Repair type', 'Done by', 'Parts', 'Cost', 'Notes']].concat(rows.map((r) => {
+    const out = [['Date', 'Printer', 'Printer code', 'Model', 'Serial', 'Repair type', 'Done by', 'Parts from inventory', 'Other parts', 'Cost', 'Notes']].concat(rows.map((r) => {
       const pr = printers.find((x) => x.id === r.printerId) || {};
-      return [r.date, r.printerName, pr.model || '', pr.serial || '', r.type, r.doneBy, r.parts, r.cost == null ? '' : r.cost, r.notes];
+      return [r.date, r.printerName, pr.code || '', pr.model || '', pr.serial || '', r.type, r.doneBy,
+        (r.inventoryParts || []).map((x) => `${x.qty} x ${x.itemName} (${x.itemCode})`).join('; '), r.parts, r.cost == null ? '' : r.cost, r.notes];
     }));
     return send(res, 200, '\ufeff' + csv(out), { 'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="printer-repairs-${stamp()}.csv"` });

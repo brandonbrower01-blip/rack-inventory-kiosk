@@ -105,9 +105,11 @@ function renderActivity(){
 function render(){S.view==='inventory'?renderInventory():S.view==='repairs'?renderRepairs():renderActivity()}
 
 /* ---------- Panels ---------- */
-function openPanel(html,label){const p=$('#panel');p.innerHTML=html;p.setAttribute('aria-label',label||'');$('#scrim').hidden=false;document.body.style.overflow='hidden';
+function openPanel(html,label){
+  // Swap in a fresh panel element so click handlers from the previous popup can't fire again.
+  const old=$('#panel');const p=old.cloneNode(false);old.replaceWith(p);p.innerHTML=html;p.setAttribute('aria-label',label||'');$('#scrim').hidden=false;document.body.style.overflow='hidden';
   const f=p.querySelector('[autofocus]');if(f)setTimeout(()=>f.focus(),30)}
-function closePanel(){if(S.stopCam){S.stopCam();S.stopCam=null}$('#scrim').hidden=true;$('#panel').innerHTML='';document.body.style.overflow='';S.openId=null}
+function closePanel(){if(S.stopCam){S.stopCam();S.stopCam=null}S.partScan=null;S.printerScan=null;$('#scrim').hidden=true;$('#panel').innerHTML='';document.body.style.overflow='';S.openId=null}
 $('#scrim').addEventListener('click',e=>{if(e.target.id==='scrim')closePanel()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#scrim').hidden)closePanel()});
 
@@ -343,14 +345,22 @@ $('#pinBtn').onclick=openChangePin;
 /* ---------- Barcodes & labels ---------- */
 function parseCode(text){
   const t=String(text||'');
-  const m=t.match(/RK\W?(\d{3,8})/i);
-  return m?'RK-'+m[1]:null;
+  const m=t.match(/(RK|PR)\W?(\d{3,8})/i);
+  return m?m[1].toUpperCase()+'-'+m[2]:null;
 }
 function handleScan(text){
   const code=parseCode(text);
   if(!code){toast('That barcode isn’t one of ours.');return}
+  if(code.startsWith('PR-')){
+    const pr=S.printers.find(x=>String(x.code).toUpperCase()===code);
+    if(!pr){toast(`No printer with barcode ${code}. It may have been removed.`);return}
+    if(S.printerScan){S.printerScan(pr);return}
+    if(S.view!=='repairs')setView('repairs');
+    closePanel();openPrinter(pr.id);toast(`Scanned ${pr.code}: ${pr.name}`);return;
+  }
   const it=S.items.find(i=>String(i.code).toUpperCase()===code.toUpperCase());
   if(!it){toast(`No item with barcode ${code}. It may have been removed.`);return}
+  if(S.partScan){S.partScan(it);return}
   if(S.view!=='inventory')setView('inventory');
   closePanel();openItem(it.id);toast(`Scanned ${it.code}: ${it.name}`);
 }
@@ -380,13 +390,16 @@ function code128Svg(text){
   return el.outerHTML;
 }
 function labelHTML(it){
+  if(String(it.code).startsWith('PR-'))return `<div class="label"><div class="l-name">${esc(it.name)}</div>
+    <div class="l-sub">${esc([it.model,it.serial&&('S/N '+it.serial)].filter(Boolean).join(' · ')||'Label printer')}</div>
+    <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;
   return `<div class="label"><div class="l-name">${esc(it.name)}</div>
     <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;
 }
 const pref={get(k,d){try{return localStorage.getItem(k)||d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 async function printLabels(ids,format){
-  const list=ids.map(id=>S.items.find(i=>i.id===id)).filter(Boolean);
-  if(!list.length){toast('Choose at least one item.');return false}
+  const list=ids.map(id=>S.items.find(i=>i.id===id)||S.printers.find(x=>x.id===id)).filter(Boolean);
+  if(!list.length){toast('Choose at least one label to print.');return false}
   const area=$('#printArea');
   area.className='fmt-'+format;
   area.innerHTML=list.map(it=>labelHTML(it)).join('');
@@ -402,16 +415,20 @@ async function openLabels(ids,opts){
   const fmt=pref.get('labelFormat','roll');
   const single=ids&&ids.length===1;
   const pick=!ids;
-  const items=[...S.items].sort((a,b)=>String(a.name).localeCompare(b.name));
+  const isPr=opts.kind==='printer';
+  const noun=isPr?'printer':'item';
+  const items=[...(isPr?S.printers:S.items)].sort((a,b)=>String(a.name).localeCompare(b.name));
   if(pick)ids=items.filter(i=>!i.labelPrintedAt).map(i=>i.id);
-  const one=single?S.items.find(i=>i.id===ids[0]):null;
-  openPanel(`<div class="phead"><div style="min-width:0"><h2>${opts.justAdded?'Item added. Print its label?':single?'Print label':'Print labels'}</h2>
-      <div class="meta">${opts.justAdded?'Stick the label on the shelf or bin. Scanning it opens this item.':single?'Scanning this label opens the item.':'One label per item. Items without a printed label are ticked.'}</div></div>
+  const one=single?items.find(i=>i.id===ids[0]):null;
+  const blurb=isPr?(opts.justAdded?'Stick it on the printer. Scanning it opens this printer’s repair history.':single?'Scanning this label opens the printer’s repair history.':'One label per printer. Printers without a printed label are ticked.')
+    :(opts.justAdded?'Stick the label on the shelf or bin. Scanning it opens this item.':single?'Scanning this label opens the item.':'One label per item. Items without a printed label are ticked.');
+  openPanel(`<div class="phead"><div style="min-width:0"><h2>${opts.justAdded?(isPr?'Printer added. Print its label?':'Item added. Print its label?'):single?'Print label':isPr?'Print printer labels':'Print labels'}</h2>
+      <div class="meta">${blurb}</div></div>
     <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
   <div class="stack">
     ${one?`<div class="lpreview">${labelHTML(one)}</div>`:`<div class="picklist">
       <label class="pickall"><input type="checkbox" id="pickAll"> <b>Select all</b> <span class="when" id="pickCount"></span></label>
-      ${items.map(i=>`<label><input type="checkbox" value="${esc(i.id)}" ${ids.includes(i.id)?'checked':''}> <span class="pname">${esc(i.name)}</span> <span class="when">${esc(i.code)}</span> ${i.labelPrintedAt?'<span class="pill okp">Printed</span>':'<span class="pill low">Needs label</span>'}</label>`).join('')||'<p class="summary">No items yet.</p>'}
+      ${items.map(i=>`<label><input type="checkbox" value="${esc(i.id)}" ${ids.includes(i.id)?'checked':''}> <span class="pname">${esc(i.name)}</span> <span class="when">${esc(i.code)}</span> ${i.labelPrintedAt?'<span class="pill okp">Printed</span>':'<span class="pill low">Needs label</span>'}</label>`).join('')||`<p class="summary">No ${noun}s yet.</p>`}
     </div>`}
     <div class="field"><label for="lblFmt">Print on</label>
       <select id="lblFmt"><option value="roll" ${fmt==='roll'?'selected':''}>Label printer, 2.25 × 1.25 in (one per label)</option>
@@ -420,7 +437,7 @@ async function openLabels(ids,opts){
     ${opts.justAdded?'<button class="btn ghost" type="button" data-act="close">Skip for now</button>':''}
   </div>`,'Print labels');
   const p=$('#panel');
-  p.querySelectorAll('[data-act=close]').forEach(b=>b.onclick=()=>{closePanel();if(opts.justAdded)toast(`Added ${one?one.name:'item'}. Print its label any time from the item.`)});
+  p.querySelectorAll('[data-act=close]').forEach(b=>b.onclick=()=>{closePanel();if(opts.justAdded)toast(`Added ${one?one.name:noun}. Print its label any time from the ${noun}.`)});
   const boxes=()=>[...p.querySelectorAll('.picklist input[value]')];
   const count=()=>{const c=boxes().filter(b=>b.checked).length;const pc=p.querySelector('#pickCount');if(pc)pc.textContent=`${c} selected`;const all=p.querySelector('#pickAll');if(all)all.checked=c&&c===boxes().length};
   if(!one){p.querySelector('#pickAll').onchange=e=>{boxes().forEach(b=>b.checked=e.target.checked);count()};p.querySelector('.picklist').addEventListener('change',count);count()}
@@ -434,11 +451,11 @@ async function openLabels(ids,opts){
 /* ---------- Scan screen (scanner or camera) ---------- */
 function openScan(){
   const canCam=('BarcodeDetector' in window)&&window.isSecureContext&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia;
-  openPanel(`<div class="phead"><div style="min-width:0"><h2>Scan a label</h2><div class="meta">Scan an item's barcode to take items out or put them back.</div></div>
+  openPanel(`<div class="phead"><div style="min-width:0"><h2>Scan a label</h2><div class="meta">Scan an item's label to take it out or put it back, or a printer's label to see its repairs.</div></div>
     <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
   <form class="stack" id="scanForm" autocomplete="off">
     <div class="field"><label for="scanInput">Scan now, or type the code</label>
-      <input id="scanInput" placeholder="RK-0001" autofocus autocapitalize="characters" spellcheck="false"></div>
+      <input id="scanInput" placeholder="RK-0001 or PR-0001" autofocus autocapitalize="characters" spellcheck="false"></div>
     <button class="btn primary big" type="submit">Find item</button>
     ${canCam?`<button class="btn" type="button" id="camBtn">Use camera</button><video id="camVideo" class="camvideo" playsinline muted hidden></video>`
       :`<p class="after">Camera scanning needs Chrome or Edge and the server set up with HTTPS. A USB or Bluetooth barcode scanner works anywhere.</p>`}
@@ -476,6 +493,7 @@ const fmtDay=d=>{if(!d)return'';const [y,m,dd]=d.split('-').map(Number);return n
 const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const byNewest=(a,b)=>String(b.date).localeCompare(String(a.date))||(b.createdAt||0)-(a.createdAt||0);
 const uniq=list=>[...new Set(list.filter(Boolean))];
+function partsText(r){return (r.inventoryParts||[]).map(x=>`${x.qty} × ${x.itemName}`).concat(r.parts?[r.parts]:[]).join(', ')}
 function fillSelect(sel,options,allLabel){const cur=sel.value;sel.innerHTML=`<option value="">${allLabel}</option>`+options.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('');
   if([...sel.options].some(o=>o.value===cur))sel.value=cur}
 
@@ -493,7 +511,7 @@ function renderRepairs(){
   $('#pgrid').innerHTML=printers.filter(p=>!fp||p.id===fp).map(p=>{
     const mine=S.repairs.filter(r=>r.printerId===p.id).sort(byNewest);const last=mine[0];
     return `<button class="pcard" type="button" data-pid="${esc(p.id)}">
-      <span class="pn">${esc(p.name)}</span>
+      <span class="pn">${esc(p.name)}</span>${p.code?`<span class="pm" style="font-family:var(--f-mono)">${esc(p.code)}${p.labelPrintedAt?'':' · <span class="pill low">Needs label</span>'}</span>`:''}
       <span class="pm">${esc([p.model,p.serial&&('S/N '+p.serial)].filter(Boolean).join(' · ')||'No model or serial yet')}</span>
       ${p.location?`<span class="pm">${esc(p.location)}</span>`:''}
       <span class="pl"><span><b>${mine.length}</b> ${mine.length===1?'repair':'repairs'}</span><span>${last?`Last: ${esc(fmtDay(last.date))}`:'No repairs logged'}</span></span>
@@ -502,7 +520,7 @@ function renderRepairs(){
   $('#rsummary').textContent=`${S.printers.length} ${S.printers.length===1?'printer':'printers'} · ${rows.length} ${rows.length===1?'repair':'repairs'}${fp||ft?' shown':''}`+(total?` · ${money(total)} spent`:'');
   $('#repairBody').innerHTML=rows.length?rows.map(r=>`<tr class="click" data-rid="${esc(r.id)}">
     <td class="when">${esc(fmtDay(r.date))}</td><td>${esc(r.printerName)}${r.printerRemoved?' <span class="when">(removed)</span>':''}</td>
-    <td><span class="rtype">${esc(r.type)}</span></td><td>${esc(r.doneBy||'—')}</td><td>${esc(r.parts||'')}</td>
+    <td><span class="rtype">${esc(r.type)}</span></td><td>${esc(r.doneBy||'—')}</td><td>${esc(partsText(r))}</td>
     <td class="money">${esc(money(r.cost))}</td><td>${esc(r.notes||'')}</td></tr>`).join('')
     :`<tr><td colspan="7" style="color:var(--muted);padding:24px 12px">${S.repairs.length?'No repairs match these filters.':'No repairs logged yet. Press Log a repair after fixing a printer.'}</td></tr>`;
 }
@@ -512,20 +530,21 @@ function openPrinter(id){
   const mine=S.repairs.filter(r=>r.printerId===id).sort(byNewest);
   const total=mine.reduce((s,r)=>s+(Number(r.cost)||0),0);
   openPanel(`<div class="phead"><div style="min-width:0"><h2>${esc(pr.name)}</h2>
-      <div class="meta">${pr.model?`<span>Model <b>${esc(pr.model)}</b></span>`:''}${pr.serial?`<span>S/N <b>${esc(pr.serial)}</b></span>`:''}${pr.location?`<span>${esc(pr.location)}</span>`:''}</div>
+      <div class="meta">${pr.code?`<span>Barcode <b>${esc(pr.code)}</b></span>`:''}${pr.model?`<span>Model <b>${esc(pr.model)}</b></span>`:''}${pr.serial?`<span>S/N <b>${esc(pr.serial)}</b></span>`:''}${pr.location?`<span>${esc(pr.location)}</span>`:''}</div>
       <div class="meta" style="margin-top:4px"><span><b>${mine.length}</b> ${mine.length===1?'repair':'repairs'}</span>${total?`<span>Total <b>${esc(money(total))}</b></span>`:''}</div></div>
     <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
   ${pr.notes?`<p class="after" style="margin-top:12px">${esc(pr.notes)}</p>`:''}
   <div class="stack"><button class="btn primary big" type="button" data-act="log">Log a repair</button></div>
   <div class="hist"><span class="lbl">Repair history</span>
     ${mine.length?`<ul class="rlist">${mine.map(r=>`<li data-rid="${esc(r.id)}"><span class="rd">${esc(fmtDay(r.date))}</span><span><span class="rtype">${esc(r.type)}</span>${r.cost!=null?` <span class="money">${esc(money(r.cost))}</span>`:''}</span>
-      <span class="rx">${esc([r.doneBy&&('By '+r.doneBy),r.parts&&('Parts: '+r.parts),r.notes].filter(Boolean).join(' · '))}</span></li>`).join('')}</ul>`
+      <span class="rx">${esc([r.doneBy&&('By '+r.doneBy),partsText(r)&&('Parts: '+partsText(r)),r.notes].filter(Boolean).join(' · '))}</span></li>`).join('')}</ul>`
       :'<p class="after">No repairs logged for this printer yet.</p>'}</div>
-  <div class="foot"><span></span><button class="btn" type="button" data-act="edit">Edit printer</button></div>`,pr.name);
+  <div class="foot"><button class="btn" type="button" data-act="label">Print label</button><button class="btn" type="button" data-act="edit">Edit printer</button></div>`,pr.name);
   const p=$('#panel');
   p.addEventListener('click',e=>{const li=e.target.closest('[data-rid]');if(li){openRepair(li.dataset.rid);return}
     const b=e.target.closest('button');if(!b)return;
-    if(b.dataset.act==='close')closePanel();else if(b.dataset.act==='log')openRepair(null,id);else if(b.dataset.act==='edit')openPrinterEdit(id)});
+    if(b.dataset.act==='close')closePanel();else if(b.dataset.act==='log')openRepair(null,id);else if(b.dataset.act==='edit')openPrinterEdit(id);
+    else if(b.dataset.act==='label')openLabels([id],{kind:'printer'})});
 }
 
 function openPrinterEdit(id){
@@ -555,7 +574,7 @@ function openPrinterEdit(id){
     const body={name:v('#prName'),model:v('#prModel'),serial:v('#prSerial'),location:v('#prLoc'),notes:v('#prNotes')};
     if(!body.name)return;const go=p.querySelector('#prGo');go.disabled=true;go.textContent='Saving…';
     try{const saved=isNew?await api('POST','/api/printers',body):await api('PUT','/api/printers/'+id,body);
-      await refresh();toast(isNew?`Added ${saved.name}`:'Saved');openPrinter(saved.id)}
+      await refresh();if(isNew){openLabels([saved.id],{kind:'printer',justAdded:true})}else{toast('Saved');openPrinter(saved.id)}}
     catch(err){toast(err.message);go.disabled=false;go.textContent=isNew?'Add printer':'Save changes'}});
 }
 
@@ -580,33 +599,84 @@ function openRepair(id,printerId){
       <datalist id="typeList">${types.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
       <div class="quick" style="margin-top:6px">${REPAIR_TYPES.slice(0,6).map(t=>`<button type="button" class="chip" data-type="${esc(t)}">${esc(t)}</button>`).join('')}</div></div>
     <div class="row2">
-      <div class="field"><label for="rpBy">Done by</label><input id="rpBy" list="byList" maxlength="80" value="${esc(r?r.doneBy:'')}" placeholder="Name or repair shop">
+      <div class="field"><label for="rpBy">Done by <span id="byNeed" class="when"></span></label><input id="rpBy" list="byList" maxlength="80" value="${esc(r?r.doneBy:'')}" placeholder="Name or repair shop">
         <datalist id="byList">${people.map(x=>`<option value="${esc(x)}">`).join('')}</datalist></div>
       <div class="field"><label for="rpCost">Cost (optional)</label><input id="rpCost" type="number" inputmode="decimal" min="0" step="0.01" value="${r&&r.cost!=null?esc(r.cost):''}" placeholder="0.00"></div>
     </div>
-    <div class="field"><label for="rpParts">Parts used (optional)</label><input id="rpParts" maxlength="300" value="${esc(r?r.parts:'')}" placeholder="e.g. Printhead P1105, platen roller"></div>
+    <div class="field"><span class="lbl">Parts from inventory (optional)</span>
+      <div id="partRows" class="partrows"></div>
+      <div class="quick" style="align-items:center"><button class="btn" type="button" data-act="addPart">+ Add a part</button><span class="after">or scan a part's barcode now</span></div>
+      <div class="after" id="partNote"></div></div>
+    <div class="field"><label for="rpParts">Other parts, not in inventory (optional)</label><input id="rpParts" maxlength="300" value="${esc(r?r.parts:'')}" placeholder="e.g. Belt ordered from vendor"></div>
     <div class="field"><label for="rpNotes">What happened / what was done</label><textarea id="rpNotes" rows="3" maxlength="2000" placeholder="e.g. Faded print on left side. Replaced printhead, ran calibration.">${esc(r?r.notes:'')}</textarea></div>
     <button class="btn primary big" type="submit" id="rpGo">${isNew?'Save repair':'Save changes'}</button>
     <div class="foot">${isNew?'<span></span>':'<button class="btn danger" type="button" data-act="del">Delete record</button>'}<button class="btn ghost" type="button" data-act="close">Cancel</button></div>
-    <div id="delBox" hidden class="confirm"><span style="flex:1 1 200px">Delete this repair record? This can't be undone.</span><button class="btn danger" type="button" data-act="delYes">Delete</button><button class="btn" type="button" data-act="delNo">Keep</button></div>
+    <div id="delBox" hidden class="confirm"><span style="flex:1 1 200px">Delete this repair record? This can't be undone.${r&&(r.inventoryParts||[]).length?`<label class="retparts"><input type="checkbox" id="retParts" checked> Put its parts back in inventory (${esc(partsText({inventoryParts:r.inventoryParts}))})</label>`:''}</span><button class="btn danger" type="button" data-act="delYes">Delete</button><button class="btn" type="button" data-act="delNo">Keep</button></div>
   </form>`,isNew?'Log a repair':'Edit repair');
   const p=$('#panel');
+  // Parts taken from inventory. When editing, this repair's own parts count as available again.
+  const orig=new Map(((r&&r.inventoryParts)||[]).map(x=>[x.itemId,x.qty]));
+  let parts=((r&&r.inventoryParts)||[]).map(x=>({itemId:x.itemId,qty:x.qty,name:x.itemName}));
+  const sortedItems=()=>[...S.items].sort((a,b)=>String(a.name).localeCompare(b.name));
+  const avail=id=>{const it=S.items.find(i=>i.id===id);return it?(it.qty||0)+(orig.get(id)||0):(orig.get(id)||0)};
+  const usedElsewhere=(id,idx)=>parts.reduce((t,x,i)=>i!==idx&&x.itemId===id?t+x.qty:t,0);
+  function drawParts(){
+    const box=p.querySelector('#partRows');
+    box.innerHTML=parts.map((x,i)=>{const gone=x.itemId&&!S.items.some(it=>it.id===x.itemId);const left=x.itemId?avail(x.itemId)-usedElsewhere(x.itemId,i):0;
+      return `<div class="partrow" data-i="${i}">
+        <select class="pItem" aria-label="Part" ${gone?'disabled':''}><option value="">Choose a part…</option>
+          ${gone?`<option value="${esc(x.itemId)}" selected>${esc(x.name)} (no longer in inventory)</option>`:''}
+          ${sortedItems().map(it=>{const a=avail(it.id);return `<option value="${esc(it.id)}" ${it.id===x.itemId?'selected':''} ${a<=0&&it.id!==x.itemId?'disabled':''}>${esc(it.name)} · ${esc(it.code)} · ${a} left</option>`}).join('')}</select>
+        <div class="pstep"><button type="button" data-pstep="-1" aria-label="One less" ${x.qty<=1||gone?'disabled':''}>${MINUS}</button><span class="pq" aria-live="polite">${x.qty}</span><button type="button" data-pstep="1" aria-label="One more" ${!x.itemId||gone||x.qty>=left?'disabled':''}>${PLUS}</button></div>
+        <button type="button" class="btn ghost premove" data-premove aria-label="Remove part" ${gone?'disabled':''}>${CLOSE}</button></div>`}).join('');
+    const picked=parts.filter(x=>x.itemId);
+    const takes=picked.reduce((t,x)=>t+Math.max(0,x.qty-(orig.get(x.itemId)||0)),0);
+    p.querySelector('#partNote').textContent=picked.length?(isNew?`Saving takes ${picked.map(x=>`${x.qty} × ${(S.items.find(i=>i.id===x.itemId)||x).name}`).join(', ')} out of inventory.`:'Changing part quantities takes out or puts back the difference.'):'';
+    p.querySelector('#byNeed').textContent=takes?'(required with parts)':'';
+  }
+  function addPart(itemId){
+    if(itemId){const ex=parts.find(x=>x.itemId===itemId);const left=avail(itemId)-usedElsewhere(itemId,-1);
+      if(left<=0){toast('None of that part left in inventory.');return}
+      if(ex){ex.qty++;}else{const blank=parts.find(x=>!x.itemId);if(blank){blank.itemId=itemId;blank.qty=1}else parts.push({itemId,qty:1})}
+      const it=S.items.find(i=>i.id===itemId);toast(`Added part: ${it?it.name:'item'}`)}
+    else parts.push({itemId:'',qty:1});
+    drawParts();
+  }
+  S.partScan=it=>addPart(it.id);
+  S.printerScan=pr=>{const sel=p.querySelector('#rpPrinter');if(![...sel.options].some(o=>o.value===pr.id))return;sel.value=pr.id;toast(`Printer: ${pr.name}`)};
+  p.querySelector('#partRows').addEventListener('change',e=>{const row=e.target.closest('.partrow');if(!row||!e.target.classList.contains('pItem'))return;
+    const i=+row.dataset.i;parts[i].itemId=e.target.value;parts[i].qty=1;
+    const dup=parts.findIndex((x,j)=>j!==i&&x.itemId&&x.itemId===parts[i].itemId);
+    if(dup>=0){parts[dup].qty=Math.min(parts[dup].qty+1,avail(parts[i].itemId));parts.splice(i,1)}
+    drawParts()});
+  drawParts();
   p.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;const a=b.dataset.act;
     if(b.dataset.type){p.querySelector('#rpType').value=b.dataset.type;return}
+    const row=b.closest('.partrow');
+    if(row&&b.dataset.pstep){const i=+row.dataset.i,x=parts[i];const left=avail(x.itemId)-usedElsewhere(x.itemId,i);x.qty=Math.max(1,Math.min(left,x.qty+Number(b.dataset.pstep)));drawParts();return}
+    if(row&&b.hasAttribute('data-premove')){parts.splice(+row.dataset.i,1);drawParts();return}
+    if(a==='addPart'){addPart(null);const sel=p.querySelectorAll('.pItem');if(sel.length)sel[sel.length-1].focus();return}
     if(a==='close')closePanel();
     else if(a==='del')p.querySelector('#delBox').hidden=false;else if(a==='delNo')p.querySelector('#delBox').hidden=true;
-    else if(a==='delYes'){b.disabled=true;try{await api('DELETE','/api/repairs/'+id);closePanel();toast('Repair record deleted');refresh()}catch(err){toast(err.message);b.disabled=false}}});
+    else if(a==='delYes'){b.disabled=true;const ret=p.querySelector('#retParts');const back=!!(ret&&ret.checked);
+      try{await api('DELETE','/api/repairs/'+id+(back?'?returnParts=1':''));closePanel();toast(back?'Repair deleted and parts put back':'Repair record deleted');refresh()}catch(err){toast(err.message);b.disabled=false}}});
   p.querySelector('#rpForm').addEventListener('submit',async e=>{e.preventDefault();const v=s=>p.querySelector(s).value.trim();
-    const body={printerId:v('#rpPrinter'),date:v('#rpDate'),type:v('#rpType'),doneBy:v('#rpBy'),cost:v('#rpCost'),parts:v('#rpParts'),notes:v('#rpNotes')};
+    const body={printerId:v('#rpPrinter'),date:v('#rpDate'),type:v('#rpType'),doneBy:v('#rpBy'),cost:v('#rpCost'),parts:v('#rpParts'),notes:v('#rpNotes'),
+      inventoryParts:parts.filter(x=>x.itemId).map(x=>({itemId:x.itemId,qty:x.qty}))};
     if(!body.printerId){toast('Choose which printer was repaired.');return}
+    if(parts.some(x=>!x.itemId)){toast('Choose a part for each row, or remove the empty row.');return}
+    if(body.inventoryParts.some(x=>x.qty>(orig.get(x.itemId)||0))&&!body.doneBy){toast('Enter who did the repair. They’re logged as taking the parts.');p.querySelector('#rpBy').focus();return}
     const go=p.querySelector('#rpGo');go.disabled=true;go.textContent='Saving…';
     try{const saved=isNew?await api('POST','/api/repairs',body):await api('PUT','/api/repairs/'+id,body);
-      await refresh();closePanel();toast(isNew?`Repair logged for ${saved.printerName}`:'Repair updated')}
+      await refresh();closePanel();
+      const n=(saved.inventoryParts||[]).length;
+      toast(isNew?`Repair logged for ${saved.printerName}`+(n?`. ${n===1?'Part':'Parts'} taken from inventory.`:''):'Repair updated')}
     catch(err){toast(err.message);go.disabled=false;go.textContent=isNew?'Save repair':'Save changes'}});
 }
 $('#pgrid').addEventListener('click',e=>{const c=e.target.closest('[data-pid]');if(c)openPrinter(c.dataset.pid)});
 $('#repairBody').addEventListener('click',e=>{const tr=e.target.closest('[data-rid]');if(tr)openRepair(tr.dataset.rid)});
-$('#addPrinterBtn').onclick=()=>openPrinterEdit(null);$('#rEmptyAdd').onclick=()=>openPrinterEdit(null);
+$('#addPrinterBtn').onclick=()=>openPrinterEdit(null);
+$('#printerLabelsBtn').onclick=()=>openLabels(null,{kind:'printer'});$('#rEmptyAdd').onclick=()=>openPrinterEdit(null);
 $('#logRepairBtn').onclick=()=>openRepair(null);
 ['#rPrinter','#rType'].forEach(sel=>$(sel).addEventListener('change',renderRepairs));
 $('#expRepairs').onclick=()=>{const qs=new URLSearchParams();if($('#rPrinter').value)qs.set('printer',$('#rPrinter').value);if($('#rType').value)qs.set('type',$('#rType').value);

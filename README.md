@@ -106,13 +106,24 @@ your name:
 The **Printer repairs** tab keeps a maintenance history for your label printers.
 
 1. **Add printer**: a name (like "Shipping desk printer"), make and model, serial number,
-   where it is, and any notes such as warranty dates.
-2. **Log a repair** whenever one is fixed: the date, the type of repair, who did it, parts
-   used, cost and what happened. Common repair types are offered (printhead cleaned or
-   replaced, platen roller, label jam, cutter, sensor calibration, firmware, power supply and
-   more), or type your own.
-3. Tap a printer to see its full history and total repair cost. Tap any repair to correct or
+   where it is, and any notes such as warranty dates. Each printer gets its own barcode code
+   (`PR-0001`, `PR-0002`, …) and the app offers to print a label for it.
+2. **Stick the label on the printer.** Scanning it on any screen opens that printer's repair
+   history. **Print printer labels** prints several at once.
+3. **Log a repair** whenever one is fixed: the date, the type of repair, who did it, parts,
+   cost and what happened. Common repair types are offered (printhead cleaned or replaced,
+   platen roller, label jam, cutter, sensor calibration, firmware, power supply and more), or
+   type your own. Scanning the printer's label while the form is open fills in the printer.
+4. Tap a printer to see its full history and total repair cost. Tap any repair to correct or
    delete it.
+
+**Parts from inventory.** In the repair form, **+ Add a part** (or scan a part's barcode) and
+set how many with − / +. Saving takes those parts out of inventory, logged in Activity under
+the person in **Done by** with a note like "Used to repair Warehouse ZT230: Printhead
+replaced". Done by is required when parts are taken. Stock is checked first: if any part
+doesn't have enough on hand, nothing is saved. Editing a repair takes out or puts back the
+difference. Deleting one offers to put its parts back. Parts that aren't in inventory can still
+be typed into **Other parts**.
 
 Filter the history by printer or repair type, and **Export (CSV)** for a spreadsheet.
 Removing a printer keeps its past repairs in the history.
@@ -221,8 +232,8 @@ All routes except `/api/auth/*` need a logged-in session cookie (`POST /api/auth
 | `POST /api/labels-printed`             | Mark labels printed `{ids: [...]}`                   |
 | `GET/POST /api/printers`               | List or add label printers                           |
 | `PUT/DELETE /api/printers/:id`         | Edit or remove a printer (its repairs are kept)      |
-| `GET/POST /api/repairs`                | List or log repairs `{printerId, date, type, doneBy, parts, cost, notes}` |
-| `PUT/DELETE /api/repairs/:id`          | Edit or delete a repair record                       |
+| `GET/POST /api/repairs`                | List or log repairs `{printerId, date, type, doneBy, parts, cost, notes, inventoryParts: [{itemId, qty}]}` |
+| `PUT/DELETE /api/repairs/:id`          | Edit or delete a repair (`?returnParts=1` puts parts back) |
 | `GET /api/export/repairs.csv`          | Repair history CSV (`printer`, `type` filters)       |
 | `POST /api/items/:id/image`            | Upload photo (raw JPEG/PNG/WebP/GIF body)            |
 | `POST /api/items/:id/transactions`     | `{type: take\|return\|restock, qty, person, note}`   |
