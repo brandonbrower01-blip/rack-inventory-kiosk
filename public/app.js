@@ -317,6 +317,8 @@ document.addEventListener('keydown',e=>{if($('#login').hidden)return;
   const now=Date.now();
   if(e.key.length===1&&!/^\d$/.test(e.key)){L.scanUntil=now+400;L.pin='';drawDots();lmsg('Enter the PIN first, then scan.',true);e.preventDefault();return}
   if(L.scanUntil&&now<L.scanUntil){L.scanUntil=now+400;e.preventDefault();return}
+  if(/^\d$/.test(e.key)&&L.lastKey&&now-L.lastKey<35){L.lastKey=now;L.scanUntil=now+400;L.pin='';drawDots();lmsg('Enter the PIN first, then scan.',true);e.preventDefault();return}
+  if(/^\d$/.test(e.key))L.lastKey=now;
   if(/^\d$/.test(e.key))pressKey(e.key);else if(e.key==='Backspace')pressKey('del');else if(e.key==='Enter')pressKey('ok');});
 $('#lockBtn').onclick=async()=>{try{await api('POST','/api/auth/logout')}catch(e){}S.items=[];S.log=[];render();showLogin()};
 
@@ -346,10 +348,19 @@ function openChangePin(){
 $('#pinBtn').onclick=openChangePin;
 
 /* ---------- Barcodes & labels ---------- */
+// Barcodes on 1 x 0.5 in labels hold a 6-digit number so the bars stay wide enough to print:
+// 1xxxxx is item RK-xxxx, 2xxxxx is printer PR-xxxx. Labels printed earlier hold the code itself.
 function parseCode(text){
-  const t=String(text||'');
+  const t=String(text||'').trim();
+  const n=t.match(/^([12])(\d{5})$/);
+  if(n)return (n[1]==='1'?'RK-':'PR-')+String(Number(n[2])).padStart(4,'0');
   const m=t.match(/(RK|PR)\W?(\d{3,8})/i);
   return m?m[1].toUpperCase()+'-'+m[2]:null;
+}
+function barcodeData(code){
+  const m=String(code).match(/^(RK|PR)-(\d+)$/);
+  if(m&&Number(m[2])<=99999)return (m[1]==='RK'?'1':'2')+String(Number(m[2])).padStart(5,'0');
+  return null;
 }
 function handleScan(text){
   const code=parseCode(text);
@@ -386,16 +397,28 @@ function fitSvg(svg){
   svg.removeAttribute('width');svg.removeAttribute('height');
   return svg;
 }
-function code128Svg(text){
+// Each bar module is 0.00985 in: exactly 2 dots on a 203 dpi printer and 3 dots at 300 dpi,
+// so bars print evenly instead of being stretched to fit.
+const MODULE_IN=0.00985;
+// Shrink a label's text line until it fits (down to 4.5pt), so serial numbers aren't cut off.
+function fitLabelText(root){
+  root.querySelectorAll('.l-name').forEach(el=>{
+    let pt=5.5;el.style.fontSize=pt+'pt';
+    while(el.scrollWidth>el.clientWidth+0.5&&pt>4.5){pt=Math.round((pt-0.25)*100)/100;el.style.fontSize=pt+'pt'}
+  });
+}
+function code128Svg(code){
+  const data=barcodeData(code);
   const el=document.createElementNS('http://www.w3.org/2000/svg','svg');
-  JsBarcode(el,text,{format:'CODE128',displayValue:false,margin:0,height:60,width:2,background:'#ffffff',lineColor:'#000000'});
+  JsBarcode(el,data||code,{format:data?'CODE128C':'CODE128',displayValue:false,margin:0,height:40,width:1,background:'#ffffff',lineColor:'#000000'});
+  const modules=parseFloat(el.getAttribute('width'));
   fitSvg(el);el.setAttribute('preserveAspectRatio','none');
+  el.setAttribute('style',`width:${(modules*MODULE_IN).toFixed(4)}in`);
   return el.outerHTML;
 }
 function labelHTML(it){
   // Printer labels leave out the name (it changes when a printer moves); scanning shows the current name.
-  if(String(it.code).startsWith('PR-'))return `<div class="label"><div class="l-name">${esc(it.model||'Label printer')}</div>
-    ${it.serial?`<div class="l-sub">S/N ${esc(it.serial)}</div>`:''}
+  if(String(it.code).startsWith('PR-'))return `<div class="label"><div class="l-name">${esc([it.model||'Label printer',it.serial&&('S/N '+it.serial)].filter(Boolean).join(' · '))}</div>
     <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;
   return `<div class="label"><div class="l-name">${esc(it.name)}</div>
     <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;
@@ -407,7 +430,8 @@ async function printLabels(ids,format){
   const area=$('#printArea');
   area.className='fmt-'+format;
   area.innerHTML=list.map(it=>labelHTML(it)).join('');
-  $('#pageSize').textContent=format==='sheet'?'@page{size:letter;margin:0.5in}':'@page{size:1.5in 1in;margin:0}';
+  area.style.display='block';fitLabelText(area);area.style.display='';
+  $('#pageSize').textContent=format==='sheet'?'@page{size:letter;margin:0.5in}':'@page{size:1in 0.5in;margin:0}';
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
   window.print();
   try{await api('POST','/api/labels-printed',{ids:list.map(i=>i.id)})}catch(e){}
@@ -435,12 +459,13 @@ async function openLabels(ids,opts){
       ${items.map(i=>`<label><input type="checkbox" value="${esc(i.id)}" ${ids.includes(i.id)?'checked':''}> <span class="pname">${esc(i.name)}</span> <span class="when">${esc(i.code)}</span> ${i.labelPrintedAt?'<span class="pill okp">Printed</span>':'<span class="pill low">Needs label</span>'}</label>`).join('')||`<p class="summary">No ${noun}s yet.</p>`}
     </div>`}
     <div class="field"><label for="lblFmt">Print on</label>
-      <select id="lblFmt"><option value="roll" ${fmt==='roll'?'selected':''}>Label printer, 1.5 × 1 in (one per label)</option>
+      <select id="lblFmt"><option value="roll" ${fmt==='roll'?'selected':''}>Label printer, 1 × 0.5 in (one per label)</option>
       <option value="sheet" ${fmt==='sheet'?'selected':''}>Regular paper, Letter (cut out labels)</option></select></div>
     <button class="btn primary big" type="button" id="lblGo">${single?'Print label':'Print selected labels'}</button>
     ${opts.justAdded?'<button class="btn ghost" type="button" data-act="close">Skip for now</button>':''}
   </div>`,'Print labels');
   const p=$('#panel');
+  fitLabelText(p);
   p.querySelectorAll('[data-act=close]').forEach(b=>b.onclick=()=>{closePanel();if(opts.justAdded)toast(`Added ${one?one.name:noun}. Print its label any time from the ${noun}.`)});
   const boxes=()=>[...p.querySelectorAll('.picklist input[value]')];
   const count=()=>{const c=boxes().filter(b=>b.checked).length;const pc=p.querySelector('#pickCount');if(pc)pc.textContent=`${c} selected`;const all=p.querySelector('#pickAll');if(all)all.checked=c&&c===boxes().length};
