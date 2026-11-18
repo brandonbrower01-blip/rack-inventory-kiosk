@@ -2,7 +2,7 @@
 'use strict';
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const S={items:[],log:[],printers:[],repairs:[],loaded:false,online:true,view:'inventory',q:'',sort:'name',openId:null};
+const S={items:[],log:[],printers:[],repairs:[],printerLog:[],rq:'',loaded:false,online:true,view:'inventory',q:'',sort:'name',openId:null};
 const TYPE_LABEL={take:'Taken',return:'Returned',restock:'Restocked',adjust:'Count corrected',add:'New item',remove:'Item removed',lockout:'Device locked out','pin-changed':'PIN changed'};
 const NO_QTY=new Set(['remove','lockout','pin-changed']);
 
@@ -29,8 +29,9 @@ async function api(method,url,body,contentType){
 }
 async function refresh(){
   try{
-    const [items,log,printers,repairs]=await Promise.all([api('GET','/api/items'),api('GET','/api/log?limit=1000'),api('GET','/api/printers'),api('GET','/api/repairs')]);
-    S.items=items;S.log=log;S.printers=printers;S.repairs=repairs;S.loaded=true;
+    const [items,log,printers,repairs,printerLog]=await Promise.all([api('GET','/api/items'),api('GET','/api/log?limit=1000'),api('GET','/api/printers'),api('GET','/api/repairs'),api('GET','/api/printer-history')]);
+    S.items=items;S.log=log;S.printers=printers;S.repairs=repairs;S.printerLog=printerLog;S.loaded=true;
+    if(S.openPrinterId&&!$('#scrim').hidden&&S.redrawPrinter)S.redrawPrinter();
     if(!S.online){S.online=true;notice('')}
   }catch(e){S.loaded=true;S.online=false;setLive(false);notice(e.message)}
   render();
@@ -107,9 +108,11 @@ function render(){S.view==='inventory'?renderInventory():S.view==='repairs'?rend
 /* ---------- Panels ---------- */
 function openPanel(html,label){
   // Swap in a fresh panel element so click handlers from the previous popup can't fire again.
-  const old=$('#panel');const p=old.cloneNode(false);old.replaceWith(p);p.innerHTML=html;p.setAttribute('aria-label',label||'');$('#scrim').hidden=false;document.body.style.overflow='hidden';
+  const old=$('#panel');const p=old.cloneNode(false);old.replaceWith(p);p.innerHTML=html;
+  if(S.stopCam){S.stopCam();S.stopCam=null}
+  S.partScan=null;S.printerScan=null;S.openPrinterId=null;S.redrawPrinter=null;p.setAttribute('aria-label',label||'');$('#scrim').hidden=false;document.body.style.overflow='hidden';
   const f=p.querySelector('[autofocus]');if(f)setTimeout(()=>f.focus(),30)}
-function closePanel(){if(S.stopCam){S.stopCam();S.stopCam=null}S.partScan=null;S.printerScan=null;$('#scrim').hidden=true;$('#panel').innerHTML='';document.body.style.overflow='';S.openId=null}
+function closePanel(){if(S.stopCam){S.stopCam();S.stopCam=null}S.partScan=null;S.printerScan=null;S.openPrinterId=null;S.redrawPrinter=null;$('#scrim').hidden=true;$('#panel').innerHTML='';document.body.style.overflow='';S.openId=null}
 $('#scrim').addEventListener('click',e=>{if(e.target.id==='scrim')closePanel()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#scrim').hidden)closePanel()});
 
@@ -504,12 +507,18 @@ function renderRepairs(){
   fillSelect($('#rPrinter'),printers.map(p=>[p.id,p.name]).concat(removed),'All printers');
   fillSelect($('#rType'),uniq(REPAIR_TYPES.concat(S.repairs.map(r=>r.type))).filter(t=>S.repairs.some(r=>r.type===t)).map(t=>[t,t]),'All types');
   const fp=$('#rPrinter').value,ft=$('#rType').value;
-  const rows=S.repairs.filter(r=>(!fp||r.printerId===fp)&&(!ft||r.type===ft)).sort(byNewest);
+  const rq=S.rq.trim().toLowerCase();
+  const prText=p=>[p.name,p.code,p.model,p.serial,p.location,p.notes].join(' ').toLowerCase();
+  const prMatch=p=>!rq||prText(p).includes(rq);
+  const repMatch=r=>{if(!rq)return true;const pr=S.printers.find(x=>x.id===r.printerId);
+    return (pr&&prText(pr).includes(rq))||[r.printerName,r.type,r.doneBy,r.notes,partsText(r)].join(' ').toLowerCase().includes(rq)};
+  const rows=S.repairs.filter(r=>(!fp||r.printerId===fp)&&(!ft||r.type===ft)&&repMatch(r)).sort(byNewest);
   const empty=S.loaded&&!S.printers.length&&!S.repairs.length;
   $('#rempty').hidden=!empty;
   ['#pgrid','#rHistHead','#rTableBox','#rsummary'].forEach(sel=>$(sel).hidden=empty);
   $('#logRepairBtn').disabled=!S.printers.length;
-  $('#pgrid').innerHTML=printers.filter(p=>!fp||p.id===fp).map(p=>{
+  const shownPrinters=printers.filter(p=>(!fp||p.id===fp)&&(prMatch(p)||(rq&&rows.some(r=>r.printerId===p.id))));
+  $('#pgrid').innerHTML=(rq&&!shownPrinters.length?`<p class="summary">No printers match “${esc(S.rq)}”.</p>`:'')+shownPrinters.map(p=>{
     const mine=S.repairs.filter(r=>r.printerId===p.id).sort(byNewest);const last=mine[0];
     return `<button class="pcard" type="button" data-pid="${esc(p.id)}">
       <span class="pn">${esc(p.name)}</span>${p.code?`<span class="pm" style="font-family:var(--f-mono)">${esc(p.code)}${p.labelPrintedAt?'':' · <span class="pill low">Needs label</span>'}</span>`:''}
@@ -518,7 +527,7 @@ function renderRepairs(){
       <span class="pl"><span><b>${mine.length}</b> ${mine.length===1?'repair':'repairs'}</span><span>${last?`Last: ${esc(fmtDay(last.date))}`:'No repairs logged'}</span></span>
     </button>`}).join('');
   const total=rows.reduce((s,r)=>s+(Number(r.cost)||0),0);
-  $('#rsummary').textContent=`${S.printers.length} ${S.printers.length===1?'printer':'printers'} · ${rows.length} ${rows.length===1?'repair':'repairs'}${fp||ft?' shown':''}`+(total?` · ${money(total)} spent`:'');
+  $('#rsummary').textContent=`${S.printers.length} ${S.printers.length===1?'printer':'printers'} · ${rows.length} ${rows.length===1?'repair':'repairs'}${fp||ft||rq?' shown':''}`+(total?` · ${money(total)} spent`:'');
   $('#repairBody').innerHTML=rows.length?rows.map(r=>`<tr class="click" data-rid="${esc(r.id)}">
     <td class="when">${esc(fmtDay(r.date))}</td><td>${esc(r.printerName)}${r.printerRemoved?' <span class="when">(removed)</span>':''}</td>
     <td><span class="rtype">${esc(r.type)}</span></td><td>${esc(r.doneBy||'—')}</td><td>${esc(partsText(r))}</td>
@@ -526,26 +535,52 @@ function renderRepairs(){
     :`<tr><td colspan="7" style="color:var(--muted);padding:24px 12px">${S.repairs.length?'No repairs match these filters.':'No repairs logged yet. Press Log a repair after fixing a printer.'}</td></tr>`;
 }
 
-function openPrinter(id){
+const EVENT_TAG={created:['Added','add'],edited:['Changed','adjust'],removed:['Removed','lockout'],'label-printed':['Label','pin-changed'],
+  'repair-logged':['Repair','restock'],'repair-edited':['Repair edited','adjust'],'repair-moved':['Repair moved','adjust'],'repair-deleted':['Repair deleted','take']};
+function fmtStamp(ms){return new Date(ms).toLocaleString(undefined,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}
+function changeLine(c){
+  if(c.from&&c.to)return `<li><b>${esc(c.label)}:</b> <s>${esc(c.from)}</s> → ${esc(c.to)}</li>`;
+  if(c.to)return `<li><b>${esc(c.label)}:</b> ${esc(c.to)}</li>`;
+  return `<li><b>${esc(c.label)}:</b> <s>${esc(c.from)}</s></li>`;
+}
+function openPrinter(id,tab){
   const pr=S.printers.find(p=>p.id===id);if(!pr)return;
-  const mine=S.repairs.filter(r=>r.printerId===id).sort(byNewest);
-  const total=mine.reduce((s,r)=>s+(Number(r.cost)||0),0);
-  openPanel(`<div class="phead"><div style="min-width:0"><h2>${esc(pr.name)}</h2>
-      <div class="meta">${pr.code?`<span>Barcode <b>${esc(pr.code)}</b></span>`:''}${pr.model?`<span>Model <b>${esc(pr.model)}</b></span>`:''}${pr.serial?`<span>S/N <b>${esc(pr.serial)}</b></span>`:''}${pr.location?`<span>${esc(pr.location)}</span>`:''}</div>
-      <div class="meta" style="margin-top:4px"><span><b>${mine.length}</b> ${mine.length===1?'repair':'repairs'}</span>${total?`<span>Total <b>${esc(money(total))}</b></span>`:''}</div></div>
-    <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
-  ${pr.notes?`<p class="after" style="margin-top:12px">${esc(pr.notes)}</p>`:''}
-  <div class="stack"><button class="btn primary big" type="button" data-act="log">Log a repair</button></div>
-  <div class="hist"><span class="lbl">Repair history</span>
-    ${mine.length?`<ul class="rlist">${mine.map(r=>`<li data-rid="${esc(r.id)}"><span class="rd">${esc(fmtDay(r.date))}</span><span><span class="rtype">${esc(r.type)}</span>${r.cost!=null?` <span class="money">${esc(money(r.cost))}</span>`:''}</span>
-      <span class="rx">${esc([r.doneBy&&('By '+r.doneBy),partsText(r)&&('Parts: '+partsText(r)),r.notes].filter(Boolean).join(' · '))}</span></li>`).join('')}</ul>`
-      :'<p class="after">No repairs logged for this printer yet.</p>'}</div>
-  <div class="foot"><button class="btn" type="button" data-act="label">Print label</button><button class="btn" type="button" data-act="edit">Edit printer</button></div>`,pr.name);
-  const p=$('#panel');
-  p.addEventListener('click',e=>{const li=e.target.closest('[data-rid]');if(li){openRepair(li.dataset.rid);return}
-    const b=e.target.closest('button');if(!b)return;
-    if(b.dataset.act==='close')closePanel();else if(b.dataset.act==='log')openRepair(null,id);else if(b.dataset.act==='edit')openPrinterEdit(id);
-    else if(b.dataset.act==='label')openLabels([id],{kind:'printer'})});
+  S.openPrinterId=id;let view=tab||'history';
+  const draw=()=>{
+    const cur=S.printers.find(p=>p.id===id);if(!cur){closePanel();return}
+    const mine=S.repairs.filter(r=>r.printerId===id).sort(byNewest);
+    const total=mine.reduce((s,r)=>s+(Number(r.cost)||0),0);
+    const events=S.printerLog.filter(e=>e.printerId===id).sort((a,b)=>b.at-a.at);
+    const scroll=$('#panel').scrollTop;
+    openPanel(`<div class="phead"><div style="min-width:0"><h2>${esc(cur.name)}</h2>
+        <div class="meta">${cur.code?`<span>Barcode <b>${esc(cur.code)}</b></span>`:''}${cur.model?`<span>Model <b>${esc(cur.model)}</b></span>`:''}${cur.serial?`<span>S/N <b>${esc(cur.serial)}</b></span>`:''}${cur.location?`<span>${esc(cur.location)}</span>`:''}</div>
+        <div class="meta" style="margin-top:4px"><span><b>${mine.length}</b> ${mine.length===1?'repair':'repairs'}</span>${total?`<span>Total <b>${esc(money(total))}</b></span>`:''}<span><b>${events.length}</b> history ${events.length===1?'entry':'entries'}</span></div></div>
+      <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
+    ${cur.notes?`<p class="after" style="margin-top:12px">${esc(cur.notes)}</p>`:''}
+    <div class="stack"><button class="btn primary big" type="button" data-act="log">Log a repair</button>
+      <div class="seg seg-neutral" role="group" aria-label="Show"><button type="button" data-view="history" aria-pressed="${view==='history'}">Full history</button><button type="button" data-view="repairs" aria-pressed="${view==='repairs'}">Repairs only</button></div></div>
+    <div class="hist">
+    ${view==='repairs'?(mine.length?`<ul class="rlist">${mine.map(r=>`<li data-rid="${esc(r.id)}"><span class="rd">${esc(fmtDay(r.date))}</span><span><span class="rtype">${esc(r.type)}</span>${r.cost!=null?` <span class="money">${esc(money(r.cost))}</span>`:''}</span>
+        <span class="rx">${esc([r.doneBy&&('By '+r.doneBy),partsText(r)&&('Parts: '+partsText(r)),r.notes].filter(Boolean).join(' · '))}</span></li>`).join('')}</ul>`
+        :'<p class="after">No repairs logged for this printer yet.</p>')
+      :(events.length?`<ol class="timeline">${events.map(e=>{const t=EVENT_TAG[e.type]||[e.type,'adjust'];const live=e.repairId&&S.repairs.some(r=>r.id===e.repairId);
+        return `<li ${live?`data-rid="${esc(e.repairId)}" class="tl-click"`:''}><div class="tl-head"><span class="tag ${t[1]}">${esc(t[0])}</span><span class="when">${esc(fmtStamp(e.at))}</span></div>
+          <div class="tl-sum">${esc(e.summary)}</div>
+          ${(e.changes||[]).length?`<ul class="tl-changes">${e.changes.map(changeLine).join('')}</ul>`:''}
+          <div class="tl-who">${esc([e.by&&('By '+e.by),e.device&&('from '+e.device),e.backfilled&&'recorded before history tracking started'].filter(Boolean).join(' · '))}</div></li>`}).join('')}</ol>`
+        :'<p class="after">No history yet.</p>')}
+    </div>
+    <div class="foot"><button class="btn" type="button" data-act="label">Print label</button><button class="btn" type="button" data-act="export">Export history</button><button class="btn" type="button" data-act="edit">Edit printer</button></div>`,cur.name);
+    const p=$('#panel');p.scrollTop=scroll;
+    p.addEventListener('click',e=>{const li=e.target.closest('[data-rid]');if(li){openRepair(li.dataset.rid);return}
+      const b=e.target.closest('button');if(!b)return;
+      if(b.dataset.view){view=b.dataset.view;draw();return}
+      if(b.dataset.act==='close')closePanel();else if(b.dataset.act==='log')openRepair(null,id);else if(b.dataset.act==='edit')openPrinterEdit(id);
+      else if(b.dataset.act==='label')openLabels([id],{kind:'printer'});
+      else if(b.dataset.act==='export')download('/api/export/printer-history.csv?printer='+encodeURIComponent(id))});
+    S.openPrinterId=id;S.redrawPrinter=draw;
+  };
+  draw();
 }
 
 function openPrinterEdit(id){
@@ -562,6 +597,8 @@ function openPrinterEdit(id){
     </div>
     <div class="field"><label for="prLoc">Where it is</label><input id="prLoc" maxlength="80" value="${esc(pr?pr.location:'')}" placeholder="e.g. Rack room, bench 2"></div>
     <div class="field"><label for="prNotes">Notes (optional)</label><textarea id="prNotes" rows="2" maxlength="1000" placeholder="Purchase date, warranty, label size it uses…">${esc(pr?pr.notes:'')}</textarea></div>
+    <div class="field"><label for="prBy">Your name (for the printer's history)</label><input id="prBy" list="prByList" maxlength="80" placeholder="Optional">
+      <datalist id="prByList">${uniq(recentPeople().concat(S.repairs.map(x=>x.doneBy))).map(x=>`<option value="${esc(x)}">`).join('')}</datalist></div>
     <button class="btn primary big" type="submit" id="prGo">${isNew?'Add printer':'Save changes'}</button>
     <div class="foot">${isNew?'<span></span>':'<button class="btn danger" type="button" data-act="del">Remove printer</button>'}<button class="btn ghost" type="button" data-act="${isNew?'close':'back'}">Cancel</button></div>
     <div id="delBox" hidden class="confirm"><span style="flex:1 1 200px">Remove <b>${esc(pr?pr.name:'')}</b>? Its ${count} repair ${count===1?'record stays':'records stay'} in the history.</span><button class="btn danger" type="button" data-act="delYes">Remove</button><button class="btn" type="button" data-act="delNo">Keep</button></div>
@@ -570,9 +607,9 @@ function openPrinterEdit(id){
   p.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;const a=b.dataset.act;
     if(a==='close')closePanel();else if(a==='back')openPrinter(id);
     else if(a==='del')p.querySelector('#delBox').hidden=false;else if(a==='delNo')p.querySelector('#delBox').hidden=true;
-    else if(a==='delYes'){b.disabled=true;try{await api('DELETE','/api/printers/'+id);closePanel();toast(`Removed ${pr.name}`);refresh()}catch(err){toast(err.message);b.disabled=false}}});
+    else if(a==='delYes'){b.disabled=true;try{await api('DELETE','/api/printers/'+id+'?by='+encodeURIComponent(p.querySelector('#prBy').value.trim()));closePanel();toast(`Removed ${pr.name}`);refresh()}catch(err){toast(err.message);b.disabled=false}}});
   p.querySelector('#prForm').addEventListener('submit',async e=>{e.preventDefault();const v=s=>p.querySelector(s).value.trim();
-    const body={name:v('#prName'),model:v('#prModel'),serial:v('#prSerial'),location:v('#prLoc'),notes:v('#prNotes')};
+    const body={name:v('#prName'),model:v('#prModel'),serial:v('#prSerial'),location:v('#prLoc'),notes:v('#prNotes'),by:v('#prBy')};
     if(!body.name)return;const go=p.querySelector('#prGo');go.disabled=true;go.textContent='Saving…';
     try{const saved=isNew?await api('POST','/api/printers',body):await api('PUT','/api/printers/'+id,body);
       await refresh();if(isNew){openLabels([saved.id],{kind:'printer',justAdded:true})}else{toast('Saved');openPrinter(saved.id)}}
@@ -610,6 +647,7 @@ function openRepair(id,printerId){
       <div class="after" id="partNote"></div></div>
     <div class="field"><label for="rpParts">Other parts, not in inventory (optional)</label><input id="rpParts" maxlength="300" value="${esc(r?r.parts:'')}" placeholder="e.g. Belt ordered from vendor"></div>
     <div class="field"><label for="rpNotes">What happened / what was done</label><textarea id="rpNotes" rows="3" maxlength="2000" placeholder="e.g. Faded print on left side. Replaced printhead, ran calibration.">${esc(r?r.notes:'')}</textarea></div>
+    ${isNew?'':`<div class="field"><label for="rpEditBy">Your name (for the printer's history)</label><input id="rpEditBy" list="byList" maxlength="80" placeholder="Optional. Who is changing this record?"></div>`}
     <button class="btn primary big" type="submit" id="rpGo">${isNew?'Save repair':'Save changes'}</button>
     <div class="foot">${isNew?'<span></span>':'<button class="btn danger" type="button" data-act="del">Delete record</button>'}<button class="btn ghost" type="button" data-act="close">Cancel</button></div>
     <div id="delBox" hidden class="confirm"><span style="flex:1 1 200px">Delete this repair record? This can't be undone.${r&&(r.inventoryParts||[]).length?`<label class="retparts"><input type="checkbox" id="retParts" checked> Put its parts back in inventory (${esc(partsText({inventoryParts:r.inventoryParts}))})</label>`:''}</span><button class="btn danger" type="button" data-act="delYes">Delete</button><button class="btn" type="button" data-act="delNo">Keep</button></div>
@@ -660,10 +698,11 @@ function openRepair(id,printerId){
     if(a==='close')closePanel();
     else if(a==='del')p.querySelector('#delBox').hidden=false;else if(a==='delNo')p.querySelector('#delBox').hidden=true;
     else if(a==='delYes'){b.disabled=true;const ret=p.querySelector('#retParts');const back=!!(ret&&ret.checked);
-      try{await api('DELETE','/api/repairs/'+id+(back?'?returnParts=1':''));closePanel();toast(back?'Repair deleted and parts put back':'Repair record deleted');refresh()}catch(err){toast(err.message);b.disabled=false}}});
+      const qs=new URLSearchParams();if(back)qs.set('returnParts','1');const who=p.querySelector('#rpEditBy').value.trim();if(who)qs.set('by',who);
+      try{await api('DELETE','/api/repairs/'+id+(qs.toString()?'?'+qs:''));closePanel();toast(back?'Repair deleted and parts put back':'Repair record deleted');refresh()}catch(err){toast(err.message);b.disabled=false}}});
   p.querySelector('#rpForm').addEventListener('submit',async e=>{e.preventDefault();const v=s=>p.querySelector(s).value.trim();
     const body={printerId:v('#rpPrinter'),date:v('#rpDate'),type:v('#rpType'),doneBy:v('#rpBy'),cost:v('#rpCost'),parts:v('#rpParts'),notes:v('#rpNotes'),
-      inventoryParts:parts.filter(x=>x.itemId).map(x=>({itemId:x.itemId,qty:x.qty}))};
+      inventoryParts:parts.filter(x=>x.itemId).map(x=>({itemId:x.itemId,qty:x.qty})),by:isNew?'':v('#rpEditBy')};
     if(!body.printerId){toast('Choose which printer was repaired.');return}
     if(parts.some(x=>!x.itemId)){toast('Choose a part for each row, or remove the empty row.');return}
     if(body.inventoryParts.some(x=>x.qty>(orig.get(x.itemId)||0))&&!body.doneBy){toast('Enter who did the repair. They’re logged as taking the parts.');p.querySelector('#rpBy').focus();return}
@@ -680,6 +719,8 @@ $('#addPrinterBtn').onclick=()=>openPrinterEdit(null);
 $('#printerLabelsBtn').onclick=()=>openLabels(null,{kind:'printer'});$('#rEmptyAdd').onclick=()=>openPrinterEdit(null);
 $('#logRepairBtn').onclick=()=>openRepair(null);
 ['#rPrinter','#rType'].forEach(sel=>$(sel).addEventListener('change',renderRepairs));
+$('#rq').addEventListener('input',e=>{S.rq=e.target.value;renderRepairs()});
+$('#rq').addEventListener('keydown',e=>{if(e.key==='Enter'&&parseCode(e.target.value)){e.preventDefault();const v=e.target.value;e.target.value='';S.rq='';renderRepairs();handleScan(v)}});
 $('#expRepairs').onclick=()=>{const qs=new URLSearchParams();if($('#rPrinter').value)qs.set('printer',$('#rPrinter').value);if($('#rType').value)qs.set('type',$('#rType').value);
   download('/api/export/repairs.csv'+(qs.toString()?'?'+qs:''))};
 

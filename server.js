@@ -17,6 +17,7 @@ const PUBLIC = path.join(__dirname, 'public');
 const ITEMS_FILE = path.join(DATA_DIR, 'items.json');
 const LOG_FILE = path.join(DATA_DIR, 'activity.jsonl');
 const PRINTERS_FILE = path.join(DATA_DIR, 'printers.json');
+const PRINTER_LOG_FILE = path.join(DATA_DIR, 'printer-history.jsonl');
 const REPAIRS_FILE = path.join(DATA_DIR, 'repairs.json');
 const MAX_IMAGE = 10 * 1024 * 1024;
 const MAX_JSON = 100 * 1024;
@@ -53,6 +54,7 @@ function saveList(file, list) { const tmp = file + '.tmp'; fs.writeFileSync(tmp,
 let printers = loadList(PRINTERS_FILE);
 let repairs = loadList(REPAIRS_FILE);
 const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
+const byName = (b) => str(b && b.by, 80);
 function printerFields(b) {
   return { name: str(b.name, 80), model: str(b.model, 80), serial: str(b.serial, 80), location: str(b.location, 80), notes: str(b.notes, 1000) };
 }
@@ -79,6 +81,52 @@ if (printers.some((x) => !x.code)) {
   for (const x of [...printers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))) if (!x.code) x.code = nextPrinterCode();
   saveList(PRINTERS_FILE, printers);
 }
+/* ---------- Printer history: every change to a printer and its repairs ---------- */
+let printerLog = [];
+try {
+  printerLog = fs.readFileSync(PRINTER_LOG_FILE, 'utf8').split('\n').filter(Boolean)
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+} catch (e) { if (e.code !== 'ENOENT') throw e; }
+function addPrinterEvent(e) {
+  const ev = Object.assign({ id: newId(), at: Date.now() }, e);
+  printerLog.push(ev);
+  fs.appendFileSync(PRINTER_LOG_FILE, JSON.stringify(ev) + '\n');
+  return ev;
+}
+const PRINTER_LABELS = { name: 'Name', model: 'Model', serial: 'Serial number', location: 'Location', notes: 'Notes' };
+const REPAIR_LABELS = { date: 'Date', type: 'Repair type', doneBy: 'Done by', parts: 'Other parts', cost: 'Cost', notes: 'Notes', inventoryParts: 'Parts from inventory', printer: 'Printer' };
+const partsLabel = (list) => (list || []).map((x) => `${x.qty} x ${x.itemName}`).join(', ');
+function diff(before, after, labels) {
+  const out = [];
+  for (const k of Object.keys(labels)) {
+    if (!(k in after)) continue;
+    let a = before[k], b = after[k];
+    if (k === 'inventoryParts') { a = partsLabel(a); b = partsLabel(b); }
+    a = a == null ? '' : String(a); b = b == null ? '' : String(b);
+    if (a !== b) out.push({ field: k, label: labels[k], from: a, to: b });
+  }
+  return out;
+}
+const repairSummary = (r) => [r.type, r.doneBy && `by ${r.doneBy}`].filter(Boolean).join(' ');
+const repairDetails = (r) => Object.keys(REPAIR_LABELS).filter((k) => k !== 'printer')
+  .map((k) => ({ field: k, label: REPAIR_LABELS[k], from: '', to: k === 'inventoryParts' ? partsLabel(r[k]) : (r[k] == null ? '' : String(r[k])) }))
+  .filter((c) => c.to);
+// Printers and repairs that existed before history tracking get their starting entries once.
+{
+  const seen = new Set(printerLog.map((e) => e.type + ':' + (e.repairId || e.printerId)));
+  let added = 0;
+  const back = (e) => { addPrinterEvent(Object.assign({ backfilled: true }, e)); added++; };
+  for (const x of printers) if (!seen.has('created:' + x.id)) {
+    back({ at: x.createdAt || Date.now(), printerId: x.id, printerName: x.name, type: 'created', summary: `Printer added as ${x.name}`,
+      changes: Object.keys(PRINTER_LABELS).filter((k) => x[k]).map((k) => ({ field: k, label: PRINTER_LABELS[k], from: '', to: x[k] })) });
+  }
+  for (const r of repairs) if (!seen.has('repair-logged:' + r.id)) {
+    back({ at: r.createdAt || Date.now(), printerId: r.printerId, printerName: r.printerName, repairId: r.id, type: 'repair-logged',
+      summary: `Repair logged: ${repairSummary(r)}`, changes: repairDetails(r), by: r.doneBy || '' });
+  }
+  if (added) printerLog.sort((a, b) => a.at - b.at);
+}
+
 // Give items created before barcodes existed a code of their own.
 if (items.some((i) => !i.code)) {
   for (const i of [...items].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))) if (!i.code) i.code = nextCode();
@@ -256,7 +304,10 @@ async function handle(req, res) {
     const now = Date.now();
     let n = 0, np = 0;
     for (const i of items) if (ids.has(i.id)) { i.labelPrintedAt = now; n++; }
-    for (const x of printers) if (ids.has(x.id)) { x.labelPrintedAt = now; np++; }
+    for (const x of printers) if (ids.has(x.id)) {
+      x.labelPrintedAt = now; np++;
+      addPrinterEvent({ printerId: x.id, printerName: x.name, type: 'label-printed', summary: `Label printed (${x.code})`, changes: [], device: device(req) });
+    }
     if (n) saveItems();
     if (np) saveList(PRINTERS_FILE, printers);
     if (n || np) broadcast();
@@ -301,21 +352,49 @@ async function handle(req, res) {
   }
 
   /* ----- Label printers ----- */
+  if (p === '/api/printer-history' && m === 'GET') {
+    const pid = str(url.searchParams.get('printer'));
+    return send(res, 200, pid ? printerLog.filter((e) => e.printerId === pid) : printerLog);
+  }
+  if (p === '/api/export/printer-history.csv' && m === 'GET') {
+    const pid = str(url.searchParams.get('printer'));
+    const rows = printerLog.filter((e) => !pid || e.printerId === pid).slice().reverse();
+    const out = [['Date', 'Time', 'Printer', 'Event', 'Changes', 'By', 'Device']].concat(rows.map((e) => {
+      const d = new Date(e.at);
+      return [d.toLocaleDateString(), d.toLocaleTimeString(), e.printerName, e.summary,
+        (e.changes || []).map((c) => c.from && c.to ? `${c.label}: ${c.from} -> ${c.to}` : c.to ? `${c.label}: ${c.to}` : `${c.label}: ${c.from} (removed)`).join('; '),
+        e.by || '', e.device || ''];
+    }));
+    return send(res, 200, '﻿' + csv(out), { 'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="printer-history-${stamp()}.csv"` });
+  }
   if (p === '/api/printers' && m === 'GET') return send(res, 200, printers);
   if (p === '/api/printers' && m === 'POST') {
-    const f = printerFields(await readJSON(req));
+    req.body = await readJSON(req);
+    const f = printerFields(req.body);
     if (!f.name) return fail(res, 400, 'Give the printer a name, like "Front desk Dymo".');
     const now = Date.now();
     const pr = Object.assign({ id: newId(), code: nextPrinterCode() }, f, { createdAt: now, updatedAt: now });
-    printers.push(pr); saveList(PRINTERS_FILE, printers); broadcast();
+    printers.push(pr); saveList(PRINTERS_FILE, printers);
+    addPrinterEvent({ printerId: pr.id, printerName: pr.name, type: 'created', summary: `Printer added as ${pr.name} (${pr.code})`,
+      changes: diff({}, f, PRINTER_LABELS), by: byName(req.body), device: device(req) });
+    broadcast();
     return send(res, 201, pr);
   }
   if ((match = p.match(/^\/api\/printers\/([a-f0-9]{16})$/))) {
     const pr = printers.find((x) => x.id === match[1]);
     if (!pr) return fail(res, 404, 'That printer no longer exists.');
     if (m === 'PUT') {
-      const f = printerFields(await readJSON(req));
+      const b = await readJSON(req);
+      const f = printerFields(b);
       if (!f.name) return fail(res, 400, 'Give the printer a name.');
+      const changes = diff(pr, f, PRINTER_LABELS);
+      if (changes.length) {
+        const renamed = changes.find((c) => c.field === 'name');
+        addPrinterEvent({ printerId: pr.id, printerName: f.name, type: 'edited', changes, by: byName(b), device: device(req),
+          summary: renamed ? `Renamed from ${renamed.from} to ${renamed.to}` + (changes.length > 1 ? ' and other details changed' : '')
+            : `Changed ${changes.map((c) => c.label.toLowerCase()).join(', ')}` });
+      }
       Object.assign(pr, f, { updatedAt: Date.now() });
       for (const r of repairs) if (r.printerId === pr.id) r.printerName = pr.name;
       saveList(PRINTERS_FILE, printers); saveList(REPAIRS_FILE, repairs); broadcast();
@@ -324,6 +403,8 @@ async function handle(req, res) {
     if (m === 'DELETE') {
       // Repair history is kept, still labelled with the printer's name.
       printers = printers.filter((x) => x !== pr);
+      addPrinterEvent({ printerId: pr.id, printerName: pr.name, type: 'removed', summary: 'Printer removed', changes: [],
+        by: str(url.searchParams.get('by'), 80), device: device(req) });
       for (const r of repairs) if (r.printerId === pr.id) r.printerRemoved = true;
       saveList(PRINTERS_FILE, printers); saveList(REPAIRS_FILE, repairs); broadcast();
       return send(res, 200, { ok: true });
@@ -388,7 +469,10 @@ async function handle(req, res) {
     const inventoryParts = applyParts([], partsMap(b.inventoryParts), { person: f.doneBy, repairId: id,
       note: { take: `Used to repair ${pr.name}: ${f.type}` } });
     const r = Object.assign({ id, printerId: pr.id, printerName: pr.name }, f, { inventoryParts, createdAt: now, updatedAt: now, device: device(req) });
-    repairs.push(r); saveList(REPAIRS_FILE, repairs); broadcast();
+    repairs.push(r); saveList(REPAIRS_FILE, repairs);
+    addPrinterEvent({ printerId: pr.id, printerName: pr.name, repairId: r.id, type: 'repair-logged', summary: `Repair logged: ${repairSummary(r)}`,
+      changes: repairDetails(r), by: r.doneBy, device: device(req) });
+    broadcast();
     return send(res, 201, r);
   }
   if ((match = p.match(/^\/api\/repairs\/([a-f0-9]{16})$/))) {
@@ -401,12 +485,25 @@ async function handle(req, res) {
       if (!f.type) return fail(res, 400, 'Choose the type of repair.');
       const pr = printers.find((x) => x.id === String(b.printerId));
       const name = pr ? pr.name : r.printerName;
+      const before = Object.assign({}, r, { inventoryParts: (r.inventoryParts || []).map((x) => Object.assign({}, x)) });
       if (b.inventoryParts !== undefined) {
         r.inventoryParts = applyParts(r.inventoryParts, partsMap(b.inventoryParts), { person: f.doneBy, repairId: r.id,
           note: { take: `Used to repair ${name}: ${f.type}`, back: `Put back after editing the ${name} repair` } });
       }
       if (pr) { r.printerId = pr.id; r.printerName = pr.name; r.printerRemoved = false; }
       Object.assign(r, f, { updatedAt: Date.now() });
+      const changes = diff(before, Object.assign({}, f, b.inventoryParts !== undefined ? { inventoryParts: r.inventoryParts } : {}), REPAIR_LABELS);
+      const who = byName(b) || r.doneBy;
+      if (before.printerId !== r.printerId) {
+        changes.push({ field: 'printer', label: 'Printer', from: before.printerName, to: r.printerName });
+        addPrinterEvent({ printerId: before.printerId, printerName: before.printerName, repairId: r.id, type: 'repair-moved',
+          summary: `Repair (${repairSummary(r)}) moved to ${r.printerName}`, changes, by: who, device: device(req) });
+      }
+      if (changes.length) {
+        addPrinterEvent({ printerId: r.printerId, printerName: r.printerName, repairId: r.id, type: 'repair-edited',
+          summary: before.printerId !== r.printerId ? `Repair moved here from ${before.printerName}: ${repairSummary(r)}` : `Repair edited: ${repairSummary(r)}`,
+          changes, by: who, device: device(req) });
+      }
       saveList(REPAIRS_FILE, repairs); broadcast();
       return send(res, 200, r);
     }
@@ -417,7 +514,13 @@ async function handle(req, res) {
         applyParts(r.inventoryParts, new Map(keep.map((x) => [x.itemId, x.qty])), { person: r.doneBy, repairId: r.id,
           note: { back: `Put back: ${r.printerName} repair record was deleted` } });
       }
-      repairs = repairs.filter((x) => x !== r); saveList(REPAIRS_FILE, repairs); broadcast();
+      repairs = repairs.filter((x) => x !== r); saveList(REPAIRS_FILE, repairs);
+      const returned = url.searchParams.get('returnParts') === '1' && (r.inventoryParts || []).length;
+      addPrinterEvent({ printerId: r.printerId, printerName: r.printerName, repairId: r.id, type: 'repair-deleted',
+        summary: `Repair deleted: ${repairSummary(r)} (${r.date})` + (returned ? '. Parts put back in inventory' : ''),
+        changes: repairDetails(r).map((c) => ({ field: c.field, label: c.label, from: c.to, to: '' })),
+        by: str(url.searchParams.get('by'), 80), device: device(req) });
+      broadcast();
       return send(res, 200, { ok: true });
     }
   }

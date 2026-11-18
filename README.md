@@ -126,7 +126,19 @@ doesn't have enough on hand, nothing is saved. Editing a repair takes out or put
 difference. Deleting one offers to put its parts back. Parts that aren't in inventory can still
 be typed into **Other parts**.
 
-Filter the history by printer or repair type, and **Export (CSV)** for a spreadsheet.
+**Search** printers by name, `PR-` code, model, serial number or location; it also searches
+repair types, notes, parts and who did them. Typing or scanning a `PR-` code and pressing Enter
+opens that printer. Filter the history by printer or repair type, and **Export (CSV)** for a
+spreadsheet.
+
+**Full history.** Opening a printer shows everything that has ever happened to it, newest
+first: when it was added, every change to its name, model, serial number, location or notes
+(old value → new value), every repair logged, edited (what changed), moved or deleted, label
+printing, and removal. Each entry records the time, the device it came from and, when entered,
+the person's name. Forms that change a printer or a repair have an optional **Your name** box
+for this. **Export history** downloads one printer's history as CSV. Printers and repairs that
+existed before this feature get their starting entries automatically, marked "recorded before
+history tracking started".
 Removing a printer keeps its past repairs in the history.
 
 ## Settings
@@ -151,7 +163,8 @@ Everything is saved in the `data` folder:
 - `items.json`: the item list and counts
 - `activity.jsonl`: every take, return, restock and correction, one per line
 - `uploads/`: item photos
-- `printers.json` and `repairs.json`: label printers and their repair history
+- `printers.json` and `repairs.json`: label printers and their repair records
+- `printer-history.jsonl`: every change to each printer and its repairs, one per line
 - `config.json`: the PIN (stored hashed, never in plain text)
 - `security.json`: logged-in devices and lockouts
 
@@ -235,6 +248,8 @@ All routes except `/api/auth/*` need a logged-in session cookie (`POST /api/auth
 | `PUT/DELETE /api/printers/:id`         | Edit or remove a printer (its repairs are kept)      |
 | `GET/POST /api/repairs`                | List or log repairs `{printerId, date, type, doneBy, parts, cost, notes, inventoryParts: [{itemId, qty}]}` |
 | `PUT/DELETE /api/repairs/:id`          | Edit or delete a repair (`?returnParts=1` puts parts back) |
+| `GET /api/printer-history`             | Printer history (`?printer=<id>` for one printer)    |
+| `GET /api/export/printer-history.csv`  | Printer history CSV (`?printer=<id>`)                |
 | `GET /api/export/repairs.csv`          | Repair history CSV (`printer`, `type` filters)       |
 | `POST /api/items/:id/image`            | Upload photo (raw JPEG/PNG/WebP/GIF body)            |
 | `POST /api/items/:id/transactions`     | `{type: take\|return\|restock, qty, person, note}`   |

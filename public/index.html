@@ -238,6 +238,18 @@ tr.click:hover td{background:var(--surface-2)}
 .retparts input{width:18px;height:18px;flex:none}
 @media (max-width:460px){.partrow{flex-wrap:wrap}.partrow select{flex:1 1 100%}}
 .l-sub{font:500 7.5pt/1.1 var(--f-body);color:#333;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:none}
+.seg-neutral button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
+.seg-neutral button{font-size:15px;min-height:44px;padding:8px}
+.timeline{list-style:none;margin:6px 0 0;padding:0 0 0 18px;border-left:2px solid var(--line);display:flex;flex-direction:column;gap:16px}
+.timeline>li{position:relative;display:flex;flex-direction:column;gap:4px;min-width:0}
+.timeline>li::before{content:"";position:absolute;left:-25px;top:5px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--accent)}
+.tl-click{cursor:pointer;border-radius:8px}
+.tl-click:hover .tl-sum{text-decoration:underline}
+.tl-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tl-sum{font-weight:600;overflow-wrap:anywhere}
+.tl-changes{margin:0;padding-left:18px;font-size:14px;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
+.tl-changes s{color:var(--muted)}
+.tl-who{font-size:13px;color:var(--muted)}
 #printArea{display:none}
 @media print{
   body{background:#fff!important}
@@ -322,6 +334,12 @@ tr.click:hover td{background:var(--surface-2)}
     </table></div>
   </section>
   <section id="view-repairs" hidden>
+    <div class="tools">
+      <div class="search">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="rq" type="search" placeholder="Search printers: name, PR code, model, serial, location" autocomplete="off" aria-label="Search printers and repairs">
+      </div>
+    </div>
     <div class="tools">
       <div class="field"><label for="rPrinter">Printer</label><select id="rPrinter"><option value="">All printers</option></select></div>
       <div class="field"><label for="rType">Repair type</label><select id="rType"><option value="">All types</option></select></div>
