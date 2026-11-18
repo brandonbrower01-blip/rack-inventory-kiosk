@@ -2,7 +2,7 @@
 'use strict';
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const S={items:[],log:[],loaded:false,online:true,view:'inventory',q:'',sort:'name',openId:null};
+const S={items:[],log:[],printers:[],repairs:[],loaded:false,online:true,view:'inventory',q:'',sort:'name',openId:null};
 const TYPE_LABEL={take:'Taken',return:'Returned',restock:'Restocked',adjust:'Count corrected',add:'New item',remove:'Item removed',lockout:'Device locked out','pin-changed':'PIN changed'};
 const NO_QTY=new Set(['remove','lockout','pin-changed']);
 
@@ -29,9 +29,8 @@ async function api(method,url,body,contentType){
 }
 async function refresh(){
   try{
-    const [items,log]=await Promise.all([api('GET','/api/items'),api('GET','/api/log?limit=1000')]);
-    S.items=items;S.log=log;S.loaded=true;
-    if(S.pendingCode){const c=S.pendingCode;S.pendingCode=null;try{history.replaceState(null,'','/'+location.hash)}catch(e){}setTimeout(()=>handleScan(c),0)}
+    const [items,log,printers,repairs]=await Promise.all([api('GET','/api/items'),api('GET','/api/log?limit=1000'),api('GET','/api/printers'),api('GET','/api/repairs')]);
+    S.items=items;S.log=log;S.printers=printers;S.repairs=repairs;S.loaded=true;
     if(!S.online){S.online=true;notice('')}
   }catch(e){S.loaded=true;S.online=false;setLive(false);notice(e.message)}
   render();
@@ -103,7 +102,7 @@ function renderActivity(){
   const taken=rows.filter(e=>e.type==='take').reduce((s,e)=>s+e.qty,0);
   $('#asummary').textContent=`${rows.length} entries${taken?` · ${taken} units taken`:''}`+(S.log.length>=1000?' · showing latest 1,000 (export includes everything)':'');
 }
-function render(){S.view==='inventory'?renderInventory():renderActivity()}
+function render(){S.view==='inventory'?renderInventory():S.view==='repairs'?renderRepairs():renderActivity()}
 
 /* ---------- Panels ---------- */
 function openPanel(html,label){const p=$('#panel');p.innerHTML=html;p.setAttribute('aria-label',label||'');$('#scrim').hidden=false;document.body.style.overflow='hidden';
@@ -247,17 +246,17 @@ $('#expLog').onclick=()=>{const f=logFilters();const qs=new URLSearchParams();
 
 /* ---------- Wiring ---------- */
 function setView(v){S.view=v;document.querySelectorAll('.tab').forEach(t=>t.setAttribute('aria-selected',t.dataset.view===v));
-  $('#view-inventory').hidden=v!=='inventory';$('#view-activity').hidden=v!=='activity';
-  try{history.replaceState(null,'',v==='activity'?'#activity':'#inventory')}catch(e){}render()}
+  $('#view-inventory').hidden=v!=='inventory';$('#view-activity').hidden=v!=='activity';$('#view-repairs').hidden=v!=='repairs';
+  try{history.replaceState(null,'','#'+v)}catch(e){}render()}
+const viewFromHash=()=>({'#activity':'activity','#repairs':'repairs'})[location.hash]||'inventory';
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>setView(t.dataset.view));
-window.addEventListener('hashchange',()=>setView(location.hash==='#activity'?'activity':'inventory'));
+window.addEventListener('hashchange',()=>setView(viewFromHash()));
 $('#q').addEventListener('input',e=>{S.q=e.target.value;renderInventory()});
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter'&&parseCode(e.target.value)){e.preventDefault();const v=e.target.value;e.target.value='';S.q='';renderInventory();handleScan(v)}});
 $('#sort').addEventListener('change',e=>{S.sort=e.target.value;renderInventory()});
 $('#grid').addEventListener('click',e=>{const c=e.target.closest('.card');if(c)openItem(c.dataset.id)});
 ['#aq','#atype','#afrom','#ato'].forEach(s=>$(s).addEventListener('input',renderActivity));
 $('#addBtn').onclick=()=>openEdit(null);$('#emptyAdd').onclick=()=>openEdit(null);
-setView(location.hash==='#activity'?'activity':'inventory');
 
 /* ---------- PIN login ---------- */
 const L={pin:'',busy:false,lockedUntil:null,timer:null,shown:false};
@@ -368,23 +367,11 @@ document.addEventListener('keydown',e=>{
   if(e.key.length===1&&!e.ctrlKey&&!e.metaKey&&!e.altKey)SC.buf+=e.key;
 });
 
-let serverUrl=null;
-async function labelBase(){
-  const h=location.hostname;
-  if(h&&h!=='localhost'&&h!=='127.0.0.1'&&h!=='[::1]')return location.origin;
-  if(!serverUrl){try{serverUrl=(await api('GET','/api/info')).url}catch(e){serverUrl=location.origin}}
-  return serverUrl;
-}
 function fitSvg(svg){
   const w=parseFloat(svg.getAttribute('width')),h=parseFloat(svg.getAttribute('height'));
   if(!svg.getAttribute('viewBox')&&w&&h)svg.setAttribute('viewBox',`0 0 ${w} ${h}`);
   svg.removeAttribute('width');svg.removeAttribute('height');
   return svg;
-}
-function qrSvg(text){
-  const q=qrcode(0,'M');q.addData(text);q.make();
-  const doc=new DOMParser().parseFromString(q.createSvgTag({cellSize:4,margin:0}),'image/svg+xml');
-  return fitSvg(doc.documentElement).outerHTML;
 }
 function code128Svg(text){
   const el=document.createElementNS('http://www.w3.org/2000/svg','svg');
@@ -392,19 +379,17 @@ function code128Svg(text){
   fitSvg(el);el.setAttribute('preserveAspectRatio','none');
   return el.outerHTML;
 }
-function labelHTML(it,base){
-  return `<div class="label"><div class="l-top"><div class="l-qr">${qrSvg(base+'/i/'+it.code)}</div>
-    <div class="l-txt"><div class="l-name">${esc(it.name)}</div><div class="l-code">${esc(it.code)}</div><div class="l-hint">Scan to take or return</div></div></div>
-    <div class="l-bar">${code128Svg(it.code)}</div></div>`;
+function labelHTML(it){
+  return `<div class="label"><div class="l-name">${esc(it.name)}</div>
+    <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;
 }
 const pref={get(k,d){try{return localStorage.getItem(k)||d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 async function printLabels(ids,format){
-  const base=await labelBase();
   const list=ids.map(id=>S.items.find(i=>i.id===id)).filter(Boolean);
   if(!list.length){toast('Choose at least one item.');return false}
   const area=$('#printArea');
   area.className='fmt-'+format;
-  area.innerHTML=list.map(it=>labelHTML(it,base)).join('');
+  area.innerHTML=list.map(it=>labelHTML(it)).join('');
   $('#pageSize').textContent=format==='sheet'?'@page{size:letter;margin:0.5in}':'@page{size:2.25in 1.25in;margin:0}';
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
   window.print();
@@ -416,7 +401,6 @@ async function openLabels(ids,opts){
   opts=opts||{};
   const fmt=pref.get('labelFormat','roll');
   const single=ids&&ids.length===1;
-  const base=await labelBase();
   const pick=!ids;
   const items=[...S.items].sort((a,b)=>String(a.name).localeCompare(b.name));
   if(pick)ids=items.filter(i=>!i.labelPrintedAt).map(i=>i.id);
@@ -425,7 +409,7 @@ async function openLabels(ids,opts){
       <div class="meta">${opts.justAdded?'Stick the label on the shelf or bin. Scanning it opens this item.':single?'Scanning this label opens the item.':'One label per item. Items without a printed label are ticked.'}</div></div>
     <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
   <div class="stack">
-    ${one?`<div class="lpreview">${labelHTML(one,base)}</div>`:`<div class="picklist">
+    ${one?`<div class="lpreview">${labelHTML(one)}</div>`:`<div class="picklist">
       <label class="pickall"><input type="checkbox" id="pickAll"> <b>Select all</b> <span class="when" id="pickCount"></span></label>
       ${items.map(i=>`<label><input type="checkbox" value="${esc(i.id)}" ${ids.includes(i.id)?'checked':''}> <span class="pname">${esc(i.name)}</span> <span class="when">${esc(i.code)}</span> ${i.labelPrintedAt?'<span class="pill okp">Printed</span>':'<span class="pill low">Needs label</span>'}</label>`).join('')||'<p class="summary">No items yet.</p>'}
     </div>`}
@@ -457,7 +441,7 @@ function openScan(){
       <input id="scanInput" placeholder="RK-0001" autofocus autocapitalize="characters" spellcheck="false"></div>
     <button class="btn primary big" type="submit">Find item</button>
     ${canCam?`<button class="btn" type="button" id="camBtn">Use camera</button><video id="camVideo" class="camvideo" playsinline muted hidden></video>`
-      :`<p class="after">Using a phone? Point its camera app at the label's square QR code. Camera scanning inside this page needs the server set up with HTTPS.</p>`}
+      :`<p class="after">Camera scanning needs Chrome or Edge and the server set up with HTTPS. A USB or Bluetooth barcode scanner works anywhere.</p>`}
   </form>`,'Scan a label');
   const p=$('#panel');
   p.querySelector('[data-act=close]').onclick=closePanel;
@@ -466,7 +450,7 @@ function openScan(){
   if(cam)cam.onclick=async()=>{
     const video=p.querySelector('#camVideo');let stream,stop=false,raf;
     try{
-      const det=new BarcodeDetector({formats:['qr_code','code_128']});
+      const det=new BarcodeDetector({formats:['code_128']});
       stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
       video.srcObject=stream;video.hidden=false;await video.play();cam.hidden=true;
       S.stopCam=()=>{stop=true;cancelAnimationFrame(raf);stream.getTracks().forEach(t=>t.stop())};
@@ -480,9 +464,156 @@ function openScan(){
 }
 $('#scanBtn').onclick=openScan;
 $('#labelsBtn').onclick=()=>openLabels(null);
-{const m=location.pathname.match(/^\/i\/([A-Za-z0-9-]{1,20})$/);if(m)S.pendingCode=m[1];}
+
+/* ---------- Printer repairs ---------- */
+const REPAIR_TYPES=['Printhead cleaned','Printhead replaced','Platen roller cleaned','Platen roller replaced','Label jam cleared',
+  'Cutter repaired or replaced','Sensor cleaned or calibrated','Firmware updated','Driver reinstalled','Power supply replaced',
+  'Cable or port repaired','Feed mechanism repaired','Case or door repaired','Other'];
+const PRINTER_MODELS=['Dymo LabelWriter 450','Dymo LabelWriter 550','Dymo LabelWriter 5XL','Brother QL-800','Brother QL-820NWB','Brother QL-1110NWB',
+  'Zebra ZD421','Zebra ZD621','Zebra GK420d','Rollo Wireless','Munbyn ITPP941'];
+const money=v=>v==null||v===''?'':Number(v).toLocaleString(undefined,{style:'currency',currency:'USD'});
+const fmtDay=d=>{if(!d)return'';const [y,m,dd]=d.split('-').map(Number);return new Date(y,m-1,dd).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})};
+const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+const byNewest=(a,b)=>String(b.date).localeCompare(String(a.date))||(b.createdAt||0)-(a.createdAt||0);
+const uniq=list=>[...new Set(list.filter(Boolean))];
+function fillSelect(sel,options,allLabel){const cur=sel.value;sel.innerHTML=`<option value="">${allLabel}</option>`+options.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('');
+  if([...sel.options].some(o=>o.value===cur))sel.value=cur}
+
+function renderRepairs(){
+  const printers=[...S.printers].sort((a,b)=>String(a.name).localeCompare(b.name));
+  const removed=uniq(S.repairs.filter(r=>r.printerRemoved).map(r=>r.printerId)).map(id=>{const r=S.repairs.find(x=>x.printerId===id);return [id,r.printerName+' (removed)']});
+  fillSelect($('#rPrinter'),printers.map(p=>[p.id,p.name]).concat(removed),'All printers');
+  fillSelect($('#rType'),uniq(REPAIR_TYPES.concat(S.repairs.map(r=>r.type))).filter(t=>S.repairs.some(r=>r.type===t)).map(t=>[t,t]),'All types');
+  const fp=$('#rPrinter').value,ft=$('#rType').value;
+  const rows=S.repairs.filter(r=>(!fp||r.printerId===fp)&&(!ft||r.type===ft)).sort(byNewest);
+  const empty=S.loaded&&!S.printers.length&&!S.repairs.length;
+  $('#rempty').hidden=!empty;
+  ['#pgrid','#rHistHead','#rTableBox','#rsummary'].forEach(sel=>$(sel).hidden=empty);
+  $('#logRepairBtn').disabled=!S.printers.length;
+  $('#pgrid').innerHTML=printers.filter(p=>!fp||p.id===fp).map(p=>{
+    const mine=S.repairs.filter(r=>r.printerId===p.id).sort(byNewest);const last=mine[0];
+    return `<button class="pcard" type="button" data-pid="${esc(p.id)}">
+      <span class="pn">${esc(p.name)}</span>
+      <span class="pm">${esc([p.model,p.serial&&('S/N '+p.serial)].filter(Boolean).join(' · ')||'No model or serial yet')}</span>
+      ${p.location?`<span class="pm">${esc(p.location)}</span>`:''}
+      <span class="pl"><span><b>${mine.length}</b> ${mine.length===1?'repair':'repairs'}</span><span>${last?`Last: ${esc(fmtDay(last.date))}`:'No repairs logged'}</span></span>
+    </button>`}).join('');
+  const total=rows.reduce((s,r)=>s+(Number(r.cost)||0),0);
+  $('#rsummary').textContent=`${S.printers.length} ${S.printers.length===1?'printer':'printers'} · ${rows.length} ${rows.length===1?'repair':'repairs'}${fp||ft?' shown':''}`+(total?` · ${money(total)} spent`:'');
+  $('#repairBody').innerHTML=rows.length?rows.map(r=>`<tr class="click" data-rid="${esc(r.id)}">
+    <td class="when">${esc(fmtDay(r.date))}</td><td>${esc(r.printerName)}${r.printerRemoved?' <span class="when">(removed)</span>':''}</td>
+    <td><span class="rtype">${esc(r.type)}</span></td><td>${esc(r.doneBy||'—')}</td><td>${esc(r.parts||'')}</td>
+    <td class="money">${esc(money(r.cost))}</td><td>${esc(r.notes||'')}</td></tr>`).join('')
+    :`<tr><td colspan="7" style="color:var(--muted);padding:24px 12px">${S.repairs.length?'No repairs match these filters.':'No repairs logged yet. Press Log a repair after fixing a printer.'}</td></tr>`;
+}
+
+function openPrinter(id){
+  const pr=S.printers.find(p=>p.id===id);if(!pr)return;
+  const mine=S.repairs.filter(r=>r.printerId===id).sort(byNewest);
+  const total=mine.reduce((s,r)=>s+(Number(r.cost)||0),0);
+  openPanel(`<div class="phead"><div style="min-width:0"><h2>${esc(pr.name)}</h2>
+      <div class="meta">${pr.model?`<span>Model <b>${esc(pr.model)}</b></span>`:''}${pr.serial?`<span>S/N <b>${esc(pr.serial)}</b></span>`:''}${pr.location?`<span>${esc(pr.location)}</span>`:''}</div>
+      <div class="meta" style="margin-top:4px"><span><b>${mine.length}</b> ${mine.length===1?'repair':'repairs'}</span>${total?`<span>Total <b>${esc(money(total))}</b></span>`:''}</div></div>
+    <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
+  ${pr.notes?`<p class="after" style="margin-top:12px">${esc(pr.notes)}</p>`:''}
+  <div class="stack"><button class="btn primary big" type="button" data-act="log">Log a repair</button></div>
+  <div class="hist"><span class="lbl">Repair history</span>
+    ${mine.length?`<ul class="rlist">${mine.map(r=>`<li data-rid="${esc(r.id)}"><span class="rd">${esc(fmtDay(r.date))}</span><span><span class="rtype">${esc(r.type)}</span>${r.cost!=null?` <span class="money">${esc(money(r.cost))}</span>`:''}</span>
+      <span class="rx">${esc([r.doneBy&&('By '+r.doneBy),r.parts&&('Parts: '+r.parts),r.notes].filter(Boolean).join(' · '))}</span></li>`).join('')}</ul>`
+      :'<p class="after">No repairs logged for this printer yet.</p>'}</div>
+  <div class="foot"><span></span><button class="btn" type="button" data-act="edit">Edit printer</button></div>`,pr.name);
+  const p=$('#panel');
+  p.addEventListener('click',e=>{const li=e.target.closest('[data-rid]');if(li){openRepair(li.dataset.rid);return}
+    const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.act==='close')closePanel();else if(b.dataset.act==='log')openRepair(null,id);else if(b.dataset.act==='edit')openPrinterEdit(id)});
+}
+
+function openPrinterEdit(id){
+  const pr=id?S.printers.find(p=>p.id===id):null;const isNew=!pr;
+  const count=pr?S.repairs.filter(r=>r.printerId===pr.id).length:0;
+  openPanel(`<div class="phead"><div style="min-width:0"><h2>${isNew?'Add printer':'Edit printer'}</h2><div class="meta">${isNew?'Add a label printer so you can log repairs against it.':'Changes show on its repair history too.'}</div></div>
+    <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
+  <form class="stack" id="prForm" autocomplete="off">
+    <div class="field"><label for="prName">Name</label><input id="prName" required maxlength="80" value="${esc(pr?pr.name:'')}" placeholder="e.g. Shipping desk printer" autofocus></div>
+    <div class="row2">
+      <div class="field"><label for="prModel">Make and model</label><input id="prModel" list="modelList" maxlength="80" value="${esc(pr?pr.model:'')}" placeholder="e.g. Zebra ZD421">
+        <datalist id="modelList">${uniq(PRINTER_MODELS.concat(S.printers.map(p=>p.model))).map(m=>`<option value="${esc(m)}">`).join('')}</datalist></div>
+      <div class="field"><label for="prSerial">Serial number</label><input id="prSerial" maxlength="80" value="${esc(pr?pr.serial:'')}" placeholder="On the sticker underneath"></div>
+    </div>
+    <div class="field"><label for="prLoc">Where it is</label><input id="prLoc" maxlength="80" value="${esc(pr?pr.location:'')}" placeholder="e.g. Rack room, bench 2"></div>
+    <div class="field"><label for="prNotes">Notes (optional)</label><textarea id="prNotes" rows="2" maxlength="1000" placeholder="Purchase date, warranty, label size it uses…">${esc(pr?pr.notes:'')}</textarea></div>
+    <button class="btn primary big" type="submit" id="prGo">${isNew?'Add printer':'Save changes'}</button>
+    <div class="foot">${isNew?'<span></span>':'<button class="btn danger" type="button" data-act="del">Remove printer</button>'}<button class="btn ghost" type="button" data-act="${isNew?'close':'back'}">Cancel</button></div>
+    <div id="delBox" hidden class="confirm"><span style="flex:1 1 200px">Remove <b>${esc(pr?pr.name:'')}</b>? Its ${count} repair ${count===1?'record stays':'records stay'} in the history.</span><button class="btn danger" type="button" data-act="delYes">Remove</button><button class="btn" type="button" data-act="delNo">Keep</button></div>
+  </form>`,isNew?'Add printer':'Edit printer');
+  const p=$('#panel');
+  p.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;const a=b.dataset.act;
+    if(a==='close')closePanel();else if(a==='back')openPrinter(id);
+    else if(a==='del')p.querySelector('#delBox').hidden=false;else if(a==='delNo')p.querySelector('#delBox').hidden=true;
+    else if(a==='delYes'){b.disabled=true;try{await api('DELETE','/api/printers/'+id);closePanel();toast(`Removed ${pr.name}`);refresh()}catch(err){toast(err.message);b.disabled=false}}});
+  p.querySelector('#prForm').addEventListener('submit',async e=>{e.preventDefault();const v=s=>p.querySelector(s).value.trim();
+    const body={name:v('#prName'),model:v('#prModel'),serial:v('#prSerial'),location:v('#prLoc'),notes:v('#prNotes')};
+    if(!body.name)return;const go=p.querySelector('#prGo');go.disabled=true;go.textContent='Saving…';
+    try{const saved=isNew?await api('POST','/api/printers',body):await api('PUT','/api/printers/'+id,body);
+      await refresh();toast(isNew?`Added ${saved.name}`:'Saved');openPrinter(saved.id)}
+    catch(err){toast(err.message);go.disabled=false;go.textContent=isNew?'Add printer':'Save changes'}});
+}
+
+function openRepair(id,printerId){
+  const r=id?S.repairs.find(x=>x.id===id):null;const isNew=!r;
+  if(isNew&&!S.printers.length){toast('Add a printer first.');openPrinterEdit(null);return}
+  const pid=r?r.printerId:(printerId||($('#rPrinter').value&&S.printers.some(p=>p.id===$('#rPrinter').value)?$('#rPrinter').value:''));
+  const printers=[...S.printers].sort((a,b)=>String(a.name).localeCompare(b.name));
+  const people=uniq(S.repairs.slice().sort(byNewest).map(x=>x.doneBy).concat(recentPeople()));
+  const types=uniq(REPAIR_TYPES.concat(S.repairs.map(x=>x.type)));
+  openPanel(`<div class="phead"><div style="min-width:0"><h2>${isNew?'Log a repair':'Edit repair'}</h2><div class="meta">Record what was fixed on a label printer.</div></div>
+    <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
+  <form class="stack" id="rpForm" autocomplete="off">
+    <div class="row2">
+      <div class="field"><label for="rpPrinter">Printer</label><select id="rpPrinter" required>
+        ${!pid?'<option value="">Choose a printer…</option>':''}
+        ${r&&r.printerRemoved?`<option value="${esc(r.printerId)}" selected>${esc(r.printerName)} (removed)</option>`:''}
+        ${printers.map(p=>`<option value="${esc(p.id)}" ${p.id===pid?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+      <div class="field"><label for="rpDate">Date</label><input id="rpDate" type="date" required value="${esc(r?r.date:todayStr())}" max="${todayStr()}"></div>
+    </div>
+    <div class="field"><label for="rpType">Type of repair</label><input id="rpType" required list="typeList" maxlength="80" value="${esc(r?r.type:'')}" placeholder="Pick one or type your own" ${pid?'autofocus':''}>
+      <datalist id="typeList">${types.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
+      <div class="quick" style="margin-top:6px">${REPAIR_TYPES.slice(0,6).map(t=>`<button type="button" class="chip" data-type="${esc(t)}">${esc(t)}</button>`).join('')}</div></div>
+    <div class="row2">
+      <div class="field"><label for="rpBy">Done by</label><input id="rpBy" list="byList" maxlength="80" value="${esc(r?r.doneBy:'')}" placeholder="Name or repair shop">
+        <datalist id="byList">${people.map(x=>`<option value="${esc(x)}">`).join('')}</datalist></div>
+      <div class="field"><label for="rpCost">Cost (optional)</label><input id="rpCost" type="number" inputmode="decimal" min="0" step="0.01" value="${r&&r.cost!=null?esc(r.cost):''}" placeholder="0.00"></div>
+    </div>
+    <div class="field"><label for="rpParts">Parts used (optional)</label><input id="rpParts" maxlength="300" value="${esc(r?r.parts:'')}" placeholder="e.g. Printhead P1105, platen roller"></div>
+    <div class="field"><label for="rpNotes">What happened / what was done</label><textarea id="rpNotes" rows="3" maxlength="2000" placeholder="e.g. Faded print on left side. Replaced printhead, ran calibration.">${esc(r?r.notes:'')}</textarea></div>
+    <button class="btn primary big" type="submit" id="rpGo">${isNew?'Save repair':'Save changes'}</button>
+    <div class="foot">${isNew?'<span></span>':'<button class="btn danger" type="button" data-act="del">Delete record</button>'}<button class="btn ghost" type="button" data-act="close">Cancel</button></div>
+    <div id="delBox" hidden class="confirm"><span style="flex:1 1 200px">Delete this repair record? This can't be undone.</span><button class="btn danger" type="button" data-act="delYes">Delete</button><button class="btn" type="button" data-act="delNo">Keep</button></div>
+  </form>`,isNew?'Log a repair':'Edit repair');
+  const p=$('#panel');
+  p.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;const a=b.dataset.act;
+    if(b.dataset.type){p.querySelector('#rpType').value=b.dataset.type;return}
+    if(a==='close')closePanel();
+    else if(a==='del')p.querySelector('#delBox').hidden=false;else if(a==='delNo')p.querySelector('#delBox').hidden=true;
+    else if(a==='delYes'){b.disabled=true;try{await api('DELETE','/api/repairs/'+id);closePanel();toast('Repair record deleted');refresh()}catch(err){toast(err.message);b.disabled=false}}});
+  p.querySelector('#rpForm').addEventListener('submit',async e=>{e.preventDefault();const v=s=>p.querySelector(s).value.trim();
+    const body={printerId:v('#rpPrinter'),date:v('#rpDate'),type:v('#rpType'),doneBy:v('#rpBy'),cost:v('#rpCost'),parts:v('#rpParts'),notes:v('#rpNotes')};
+    if(!body.printerId){toast('Choose which printer was repaired.');return}
+    const go=p.querySelector('#rpGo');go.disabled=true;go.textContent='Saving…';
+    try{const saved=isNew?await api('POST','/api/repairs',body):await api('PUT','/api/repairs/'+id,body);
+      await refresh();closePanel();toast(isNew?`Repair logged for ${saved.printerName}`:'Repair updated')}
+    catch(err){toast(err.message);go.disabled=false;go.textContent=isNew?'Save repair':'Save changes'}});
+}
+$('#pgrid').addEventListener('click',e=>{const c=e.target.closest('[data-pid]');if(c)openPrinter(c.dataset.pid)});
+$('#repairBody').addEventListener('click',e=>{const tr=e.target.closest('[data-rid]');if(tr)openRepair(tr.dataset.rid)});
+$('#addPrinterBtn').onclick=()=>openPrinterEdit(null);$('#rEmptyAdd').onclick=()=>openPrinterEdit(null);
+$('#logRepairBtn').onclick=()=>openRepair(null);
+['#rPrinter','#rType'].forEach(sel=>$(sel).addEventListener('change',renderRepairs));
+$('#expRepairs').onclick=()=>{const qs=new URLSearchParams();if($('#rPrinter').value)qs.set('printer',$('#rPrinter').value);if($('#rType').value)qs.set('type',$('#rType').value);
+  download('/api/export/repairs.csv'+(qs.toString()?'?'+qs:''))};
 
 (async function boot(){
+  setView(viewFromHash());
   drawDots();
   try{const st=await api('GET','/api/auth/status');
     if(st.loggedIn&&!st.lockedUntil){await refresh();connectLive()}else{S.loaded=true;render();showLogin(st)}}

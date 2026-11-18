@@ -16,6 +16,8 @@ const UPLOADS = path.join(DATA_DIR, 'uploads');
 const PUBLIC = path.join(__dirname, 'public');
 const ITEMS_FILE = path.join(DATA_DIR, 'items.json');
 const LOG_FILE = path.join(DATA_DIR, 'activity.jsonl');
+const PRINTERS_FILE = path.join(DATA_DIR, 'printers.json');
+const REPAIRS_FILE = path.join(DATA_DIR, 'repairs.json');
 const MAX_IMAGE = 10 * 1024 * 1024;
 const MAX_JSON = 100 * 1024;
 
@@ -44,6 +46,21 @@ try {
 } catch (e) { if (e.code !== 'ENOENT') throw e; }
 
 const newId = () => crypto.randomBytes(8).toString('hex');
+
+/* ---------- Label printers and their repair history ---------- */
+function loadList(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; return []; } }
+function saveList(file, list) { const tmp = file + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(list, null, 2)); fs.renameSync(tmp, file); }
+let printers = loadList(PRINTERS_FILE);
+let repairs = loadList(REPAIRS_FILE);
+const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
+function printerFields(b) {
+  return { name: str(b.name, 80), model: str(b.model, 80), serial: str(b.serial, 80), location: str(b.location, 80), notes: str(b.notes, 1000) };
+}
+function repairFields(b) {
+  const cost = b.cost === '' || b.cost == null ? null : Math.round(Number(b.cost) * 100) / 100;
+  return { date: str(b.date, 10), type: str(b.type, 80), doneBy: str(b.doneBy, 80), parts: str(b.parts, 300),
+    cost: Number.isFinite(cost) && cost >= 0 ? cost : null, notes: str(b.notes, 2000) };
+}
 
 /* ---------- Barcodes: every item gets a short code like RK-0001 ---------- */
 const CODE_PREFIX = 'RK-';
@@ -177,10 +194,6 @@ async function handle(req, res) {
     return;
   }
   if (p === '/api/items' && m === 'GET') return send(res, 200, items);
-  if (p === '/api/info' && m === 'GET') {
-    // The address printed into QR codes, so phones scanning a label reach this server.
-    return send(res, 200, { url: (process.env.PUBLIC_URL || '').replace(/\/+$/, '') || lanUrls()[0] || `http://localhost:${PORT}` });
-  }
   if (p === '/api/log' && m === 'GET') {
     const limit = Math.min(5000, int(url.searchParams.get('limit')) || 1000);
     return send(res, 200, log.slice(-limit).reverse());
@@ -273,6 +286,81 @@ async function handle(req, res) {
     return send(res, 200, { item, entry });
   }
 
+  /* ----- Label printers ----- */
+  if (p === '/api/printers' && m === 'GET') return send(res, 200, printers);
+  if (p === '/api/printers' && m === 'POST') {
+    const f = printerFields(await readJSON(req));
+    if (!f.name) return fail(res, 400, 'Give the printer a name, like "Front desk Dymo".');
+    const now = Date.now();
+    const pr = Object.assign({ id: newId() }, f, { createdAt: now, updatedAt: now });
+    printers.push(pr); saveList(PRINTERS_FILE, printers); broadcast();
+    return send(res, 201, pr);
+  }
+  if ((match = p.match(/^\/api\/printers\/([a-f0-9]{16})$/))) {
+    const pr = printers.find((x) => x.id === match[1]);
+    if (!pr) return fail(res, 404, 'That printer no longer exists.');
+    if (m === 'PUT') {
+      const f = printerFields(await readJSON(req));
+      if (!f.name) return fail(res, 400, 'Give the printer a name.');
+      Object.assign(pr, f, { updatedAt: Date.now() });
+      for (const r of repairs) if (r.printerId === pr.id) r.printerName = pr.name;
+      saveList(PRINTERS_FILE, printers); saveList(REPAIRS_FILE, repairs); broadcast();
+      return send(res, 200, pr);
+    }
+    if (m === 'DELETE') {
+      // Repair history is kept, still labelled with the printer's name.
+      printers = printers.filter((x) => x !== pr);
+      for (const r of repairs) if (r.printerId === pr.id) r.printerRemoved = true;
+      saveList(PRINTERS_FILE, printers); saveList(REPAIRS_FILE, repairs); broadcast();
+      return send(res, 200, { ok: true });
+    }
+  }
+
+  /* ----- Repairs ----- */
+  if (p === '/api/repairs' && m === 'GET') return send(res, 200, repairs);
+  if (p === '/api/repairs' && m === 'POST') {
+    const b = await readJSON(req);
+    const pr = printers.find((x) => x.id === String(b.printerId));
+    if (!pr) return fail(res, 400, 'Choose which printer was repaired.');
+    const f = repairFields(b);
+    if (!isDate(f.date)) return fail(res, 400, 'Enter the date of the repair.');
+    if (!f.type) return fail(res, 400, 'Choose the type of repair.');
+    const now = Date.now();
+    const r = Object.assign({ id: newId(), printerId: pr.id, printerName: pr.name }, f, { createdAt: now, updatedAt: now, device: device(req) });
+    repairs.push(r); saveList(REPAIRS_FILE, repairs); broadcast();
+    return send(res, 201, r);
+  }
+  if ((match = p.match(/^\/api\/repairs\/([a-f0-9]{16})$/))) {
+    const r = repairs.find((x) => x.id === match[1]);
+    if (!r) return fail(res, 404, 'That repair record no longer exists.');
+    if (m === 'PUT') {
+      const b = await readJSON(req);
+      const f = repairFields(b);
+      if (!isDate(f.date)) return fail(res, 400, 'Enter the date of the repair.');
+      if (!f.type) return fail(res, 400, 'Choose the type of repair.');
+      const pr = printers.find((x) => x.id === String(b.printerId));
+      if (pr) { r.printerId = pr.id; r.printerName = pr.name; r.printerRemoved = false; }
+      Object.assign(r, f, { updatedAt: Date.now() });
+      saveList(REPAIRS_FILE, repairs); broadcast();
+      return send(res, 200, r);
+    }
+    if (m === 'DELETE') {
+      repairs = repairs.filter((x) => x !== r); saveList(REPAIRS_FILE, repairs); broadcast();
+      return send(res, 200, { ok: true });
+    }
+  }
+  if (p === '/api/export/repairs.csv' && m === 'GET') {
+    const pid = str(url.searchParams.get('printer')), type = str(url.searchParams.get('type'));
+    const rows = repairs.filter((r) => (!pid || r.printerId === pid) && (!type || r.type === type))
+      .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+    const out = [['Date', 'Printer', 'Model', 'Serial', 'Repair type', 'Done by', 'Parts', 'Cost', 'Notes']].concat(rows.map((r) => {
+      const pr = printers.find((x) => x.id === r.printerId) || {};
+      return [r.date, r.printerName, pr.model || '', pr.serial || '', r.type, r.doneBy, r.parts, r.cost == null ? '' : r.cost, r.notes];
+    }));
+    return send(res, 200, '\ufeff' + csv(out), { 'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="printer-repairs-${stamp()}.csv"` });
+  }
+
   if (p === '/api/export/inventory.csv' && m === 'GET') {
     const rows = [['Barcode', 'Item', 'On hand', 'Unit', 'Status', 'Last updated']].concat(
       [...items].sort((a, b) => a.name.localeCompare(b.name)).map((i) => [i.code, i.name, i.qty, i.unit, i.qty <= 0 ? 'Out' : 'In stock',
@@ -299,8 +387,7 @@ async function handle(req, res) {
     return serveFile(res, path.join(UPLOADS, name), 'public, max-age=31536000, immutable');
   }
   if (m === 'GET') {
-    // /i/RK-0001 is the link inside each item's QR code; the page opens that item.
-    const rel = p === '/' || /^\/i\/[A-Za-z0-9-]{1,20}$/.test(p) ? 'index.html' : decodeURIComponent(p).replace(/^\/+/, '');
+    const rel = p === '/' ? 'index.html' : decodeURIComponent(p).replace(/^\/+/, '');
     const file = path.join(PUBLIC, rel);
     if (!file.startsWith(PUBLIC + path.sep)) return fail(res, 404, 'Not found');
     return serveFile(res, file);

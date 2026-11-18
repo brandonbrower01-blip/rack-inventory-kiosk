@@ -193,15 +193,11 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
 .lock-box b{font-family:var(--f-mono);font-size:26px;display:block;margin-top:4px}
 @media (prefers-reduced-motion:reduce){.dots.shake{animation:none}}
 /* Labels (paper is always white, whatever the screen theme) */
-.label{width:2.25in;height:1.25in;padding:.07in .09in;box-sizing:border-box;display:flex;flex-direction:column;gap:.05in;background:#fff;color:#000;overflow:hidden;break-inside:avoid;page-break-inside:avoid}
-.l-top{display:flex;gap:.08in;flex:1;min-height:0}
-.l-qr{width:.74in;height:.74in;flex:none}
-.l-qr svg{width:100%;height:100%;display:block}
-.l-txt{min-width:0;display:flex;flex-direction:column;gap:.02in}
-.l-name{font:700 9.5pt/1.12 var(--f-body);overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow-wrap:anywhere}
-.l-code{font:600 11pt/1 var(--f-mono);letter-spacing:.02em}
-.l-hint{font:500 6.5pt/1.1 var(--f-body);color:#444;margin-top:auto}
-.l-bar svg{width:100%;height:.26in;display:block}
+.label{width:2.25in;height:1.25in;padding:.08in .12in;box-sizing:border-box;display:flex;flex-direction:column;gap:.04in;background:#fff;color:#000;overflow:hidden;break-inside:avoid;page-break-inside:avoid}
+.l-name{font:700 10pt/1.15 var(--f-body);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;flex:none}
+.l-bar{flex:1;min-height:0;display:flex}
+.l-bar svg{width:100%;height:100%;display:block}
+.l-code{font:600 11pt/1 var(--f-mono);letter-spacing:.08em;text-align:center;flex:none}
 .lpreview{display:flex;justify-content:center;padding:14px;background:var(--surface-2);border-radius:12px;overflow-x:auto}
 .lpreview .label{box-shadow:0 1px 4px rgba(0,0,0,.25);border-radius:4px;flex:none}
 .picklist{display:flex;flex-direction:column;gap:2px;max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px}
@@ -211,6 +207,23 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
 .picklist .pname{flex:1;min-width:0;overflow-wrap:anywhere}
 .picklist .pickall{border-bottom:1px solid var(--line);border-radius:8px 8px 0 0}
 .camvideo{width:100%;border-radius:12px;background:#000;aspect-ratio:4/3;object-fit:cover}
+.pgrid{grid-template-columns:repeat(auto-fill,minmax(240px,1fr));margin-bottom:24px}
+.pcard{display:flex;flex-direction:column;gap:6px;text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:14px 16px;min-width:0}
+.pcard:hover{box-shadow:var(--shadow)}
+.pcard .pn{font-family:var(--f-display);font-size:21px;font-weight:700;text-transform:uppercase;line-height:1.1;overflow-wrap:anywhere}
+.pcard .pm{font-size:14px;color:var(--muted);overflow-wrap:anywhere}
+.pcard .pl{margin-top:auto;padding-top:8px;border-top:1px solid var(--line);font-size:14px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.pcard .pl b{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.sect{font-family:var(--f-display);font-size:20px;text-transform:uppercase;letter-spacing:.03em;margin:0 0 10px}
+tr.click{cursor:pointer}
+tr.click:hover td{background:var(--surface-2)}
+.rtype{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:4px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.rlist{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column}
+.rlist li{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.rlist li:last-child{border-bottom:0}
+.rlist .rd{font-family:var(--f-mono);font-size:13px;color:var(--muted);white-space:nowrap}
+.rlist .rx{font-size:14px;color:var(--muted);grid-column:2;overflow-wrap:anywhere}
+.money{font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 #printArea{display:none}
 @media print{
   body{background:#fff!important}
@@ -236,6 +249,7 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
     <nav class="tabs" role="tablist">
       <button class="tab" role="tab" id="tab-inventory" aria-selected="true" data-view="inventory">Inventory</button>
       <button class="tab" role="tab" id="tab-activity" aria-selected="false" data-view="activity">Activity</button>
+      <button class="tab" role="tab" id="tab-repairs" aria-selected="false" data-view="repairs">Printer repairs</button>
     </nav>
     <button class="btn" id="scanBtn" type="button" title="Scan a barcode"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M3 7V4h3M18 4h3v3M21 17v3h-3M6 20H3v-3"/><path d="M7 8v8M10 8v8M13 8v8M16.5 8v8"/></svg>Scan</button>
     <button class="btn" id="lockBtn" type="button" title="Lock this device"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Lock</button>
@@ -293,6 +307,28 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
       <tbody id="logBody"></tbody>
     </table></div>
   </section>
+  <section id="view-repairs" hidden>
+    <div class="tools">
+      <div class="field"><label for="rPrinter">Printer</label><select id="rPrinter"><option value="">All printers</option></select></div>
+      <div class="field"><label for="rType">Repair type</label><select id="rType"><option value="">All types</option></select></div>
+      <span style="flex:1"></span>
+      <button class="btn" type="button" id="addPrinterBtn">Add printer</button>
+      <button class="btn" type="button" id="expRepairs">Export (CSV)</button>
+      <button class="btn primary" type="button" id="logRepairBtn">Log a repair</button>
+    </div>
+    <p class="summary" id="rsummary"></p>
+    <div class="grid pgrid" id="pgrid"></div>
+    <div id="rempty" class="empty" hidden>
+      <h2>No label printers yet</h2>
+      <p>Add each label printer once, then log every repair against it: what was fixed, when, by whom and what it cost.</p>
+      <div><button class="btn primary" type="button" id="rEmptyAdd">Add a printer</button></div>
+    </div>
+    <h3 class="sect" id="rHistHead">Repair history</h3>
+    <div class="tablebox" id="rTableBox"><table>
+      <thead><tr><th>Date</th><th>Printer</th><th>Repair</th><th>Done by</th><th>Parts</th><th>Cost</th><th>Notes</th></tr></thead>
+      <tbody id="repairBody"></tbody>
+    </table></div>
+  </section>
 </main>
 
 <div class="scrim" id="scrim" hidden><div class="panel" id="panel" role="dialog" aria-modal="true"></div></div>
@@ -315,7 +351,6 @@ textarea.copy{width:100%;min-height:200px;font-family:var(--f-mono);font-size:12
   </div>
 </div>
 <div id="printArea" aria-hidden="true"></div>
-<script src="/vendor/qrcode.js"></script>
 <script src="/vendor/JsBarcode.code128.min.js"></script>
 <script src="/app.js"></script>
 </body>

@@ -11,6 +11,7 @@ the same network. Every device stays in sync live.
 - Export inventory and activity to CSV (opens in Excel or Google Sheets)
 - Add, edit or remove items, with photos taken right from a tablet's camera
 - PIN login, with a 30-minute lockout after 4 wrong PINs in a row
+- Printer repairs: log what was fixed on each label printer, when, by whom and what it cost
 - Barcode labels: every item gets its own code (RK-0001, RK-0002, …). After you add an item
   it offers to print the label; scanning it later opens that item, ready to take out
 
@@ -89,7 +90,7 @@ been printed. Two layouts:
   to none.
 - **Regular paper, Letter.** Labels laid out 3 across with cut lines.
 
-Each label has the item name, its code, a **QR code** and a regular **Code 128 barcode**.
+Each label has the item name, a **Code 128 barcode** and the code in plain text.
 
 **Scanning** opens the item with **Take out** selected, so you only set the count and enter
 your name:
@@ -97,17 +98,24 @@ your name:
 - **USB or Bluetooth barcode scanner** (works like a keyboard): just scan, on any screen.
   Nothing needs to be clicked first. Scanning on the PIN screen is ignored and never counts
   as a wrong PIN.
-- **Phone camera:** point the camera app at the QR code. It opens the item on the server
-  (the phone must be on the same network and enter the PIN the first time).
 - **Scan button:** type a code by hand. On HTTPS setups in Chrome/Edge it can also use the
   device's camera.
 
-**QR link address.** QR codes contain the server's address, such as
-`http://192.168.1.50:3000/i/RK-0001`. If you print from the server machine itself
-(`localhost`), the app fills in its network address. Give the server a fixed IP (a DHCP
-reservation on your router) so printed labels keep working, or set `PUBLIC_URL` to a
-hostname, for example `PUBLIC_URL=http://inventory.local:3000`. If the address changes,
-the regular barcodes keep working with scanners; only the phone-camera links need reprinting.
+## Printer repairs
+
+The **Printer repairs** tab keeps a maintenance history for your label printers.
+
+1. **Add printer**: a name (like "Shipping desk printer"), make and model, serial number,
+   where it is, and any notes such as warranty dates.
+2. **Log a repair** whenever one is fixed: the date, the type of repair, who did it, parts
+   used, cost and what happened. Common repair types are offered (printhead cleaned or
+   replaced, platen roller, label jam, cutter, sensor calibration, firmware, power supply and
+   more), or type your own.
+3. Tap a printer to see its full history and total repair cost. Tap any repair to correct or
+   delete it.
+
+Filter the history by printer or repair type, and **Export (CSV)** for a spreadsheet.
+Removing a printer keeps its past repairs in the history.
 
 ## Settings
 
@@ -122,7 +130,6 @@ Set these as environment variables before starting:
 | `MAX_PIN_ATTEMPTS` | `4` | Wrong PINs in a row before a lockout |
 | `LOCKOUT_MINUTES` | `30` | How long a lockout lasts |
 | `SESSION_HOURS` | `24` | How long a device stays logged in |
-| `PUBLIC_URL` | server's network IP | Address put into label QR codes |
 | `TRUST_PROXY` | off | Set to `1` only behind a reverse proxy, to read the real client IP |
 
 ## Your data
@@ -132,6 +139,7 @@ Everything is saved in the `data` folder:
 - `items.json`: the item list and counts
 - `activity.jsonl`: every take, return, restock and correction, one per line
 - `uploads/`: item photos
+- `printers.json` and `repairs.json`: label printers and their repair history
 - `config.json`: the PIN (stored hashed, never in plain text)
 - `security.json`: logged-in devices and lockouts
 
@@ -211,8 +219,11 @@ All routes except `/api/auth/*` need a logged-in session cookie (`POST /api/auth
 | `PUT /api/items/:id`                   | Edit item `{name, unit, qty, person}`                |
 | `DELETE /api/items/:id`                | Remove item                                          |
 | `POST /api/labels-printed`             | Mark labels printed `{ids: [...]}`                   |
-| `GET /api/info`                        | Server address used in QR codes                      |
-| `GET /i/:code`                         | Opens the item with that barcode (QR code link)      |
+| `GET/POST /api/printers`               | List or add label printers                           |
+| `PUT/DELETE /api/printers/:id`         | Edit or remove a printer (its repairs are kept)      |
+| `GET/POST /api/repairs`                | List or log repairs `{printerId, date, type, doneBy, parts, cost, notes}` |
+| `PUT/DELETE /api/repairs/:id`          | Edit or delete a repair record                       |
+| `GET /api/export/repairs.csv`          | Repair history CSV (`printer`, `type` filters)       |
 | `POST /api/items/:id/image`            | Upload photo (raw JPEG/PNG/WebP/GIF body)            |
 | `POST /api/items/:id/transactions`     | `{type: take\|return\|restock, qty, person, note}`   |
 | `GET /api/log?limit=1000`              | Latest activity, newest first                        |
@@ -222,6 +233,5 @@ All routes except `/api/auth/*` need a logged-in session cookie (`POST /api/auth
 
 ## Third-party code
 
-`public/vendor/` contains [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator)
-(MIT, © Kazuhiko Arase) and [JsBarcode](https://github.com/lindell/JsBarcode) Code 128
+`public/vendor/` contains [JsBarcode](https://github.com/lindell/JsBarcode) Code 128
 (MIT, © Johan Lindell), bundled so labels print without an internet connection.
