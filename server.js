@@ -187,6 +187,13 @@ async function readJSON(req) {
   try { return JSON.parse(buf.toString('utf8') || '{}'); }
   catch { throw Object.assign(new Error('Request body must be JSON.'), { status: 400 }); }
 }
+// Items below their minimum, with how many to order to get back up to the maximum (or the minimum when no maximum is set).
+function orderList() {
+  return items.filter((i) => i.minQty != null && i.qty < i.minQty)
+    .map((i) => Object.assign({}, i, { orderQty: (i.maxQty != null ? i.maxQty : i.minQty) - i.qty }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+const badReq = (msg) => Object.assign(new Error(msg), { status: 400 });
 const str = (v, max = 200) => String(v == null ? '' : v).trim().slice(0, max);
 const int = (v) => { const n = Math.floor(Number(v)); return Number.isFinite(n) ? n : NaN; };
 const device = (req) => (req.who ? (req.who.mac ? `${req.who.ip} (${req.who.mac})` : req.who.ip) : '');
@@ -257,13 +264,22 @@ async function handle(req, res) {
     return send(res, 200, log.slice(-limit).reverse());
   }
 
+  // Minimum and maximum on hand drive the order report. Blank means not set.
+  function stockLevels(b) {
+    const lv = (v) => (v === '' || v == null ? null : int(v));
+    const minQty = lv(b.minQty), maxQty = lv(b.maxQty);
+    if ((minQty !== null && !(minQty >= 0)) || (maxQty !== null && !(maxQty >= 0))) throw badReq('Minimum and maximum must be whole numbers, 0 or more.');
+    if (minQty !== null && maxQty !== null && maxQty < minQty) throw badReq('Maximum must be at least the minimum.');
+    return { minQty, maxQty };
+  }
   if (p === '/api/items' && m === 'POST') {
     const b = await readJSON(req);
     const name = str(b.name);
     if (!name) return fail(res, 400, 'Item name is required.');
+    const levels = stockLevels(b);
     const qty = Math.max(0, int(b.qty) || 0);
     const now = Date.now();
-    const item = { id: newId(), code: nextCode(), name, unit: str(b.unit, 30) || 'pcs', qty, image: null, createdAt: now, updatedAt: now };
+    const item = Object.assign({ id: newId(), code: nextCode(), name, unit: str(b.unit, 30) || 'pcs', qty }, levels, { image: null, createdAt: now, updatedAt: now });
     items.push(item); saveItems();
     addLog({ itemId: item.id, itemCode: item.code, itemName: name, type: 'add', qty, delta: qty, after: qty, person: str(b.person, 80), note: 'Item added', device: device(req) });
     broadcast();
@@ -278,6 +294,7 @@ async function handle(req, res) {
       const name = str(b.name);
       if (!name) return fail(res, 400, 'Item name is required.');
       const before = item.qty;
+      if (b.minQty !== undefined || b.maxQty !== undefined) Object.assign(item, stockLevels(b));
       item.name = name;
       item.unit = str(b.unit, 30) || 'pcs';
       if (b.qty !== undefined) item.qty = Math.max(0, int(b.qty) || 0);
@@ -537,9 +554,17 @@ async function handle(req, res) {
       'Content-Disposition': `attachment; filename="printer-repairs-${stamp()}.csv"` });
   }
 
+  if (p === '/api/export/order.csv' && m === 'GET') {
+    const rows = orderList();
+    const out = [['Barcode', 'Item', 'On hand', 'Minimum', 'Maximum', 'Order quantity', 'Unit']].concat(
+      rows.map((x) => [x.code, x.name, x.qty, x.minQty, x.maxQty == null ? '' : x.maxQty, x.orderQty, x.unit]));
+    return send(res, 200, '\ufeff' + csv(out), { 'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="order-${stamp()}.csv"` });
+  }
   if (p === '/api/export/inventory.csv' && m === 'GET') {
-    const rows = [['Barcode', 'Item', 'On hand', 'Unit', 'Status', 'Last updated']].concat(
-      [...items].sort((a, b) => a.name.localeCompare(b.name)).map((i) => [i.code, i.name, i.qty, i.unit, i.qty <= 0 ? 'Out' : 'In stock',
+    const rows = [['Barcode', 'Item', 'On hand', 'Unit', 'Minimum', 'Maximum', 'Status', 'Last updated']].concat(
+      [...items].sort((a, b) => a.name.localeCompare(b.name)).map((i) => [i.code, i.name, i.qty, i.unit, i.minQty == null ? '' : i.minQty, i.maxQty == null ? '' : i.maxQty,
+        i.qty <= 0 ? 'Out' : i.minQty != null && i.qty < i.minQty ? 'Below minimum' : 'In stock',
         new Date(i.updatedAt).toLocaleString()]));
     return send(res, 200, '﻿' + csv(rows), { 'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="inventory-${stamp()}.csv"` });

@@ -11,7 +11,7 @@ the same network. Every device stays in sync live.
 - Export inventory and activity to CSV (opens in Excel or Google Sheets)
 - Add, edit or remove items, with photos taken right from a tablet's camera
 - PIN login, with a 30-minute lockout after 4 wrong PINs in a row
-- Printer repairs: log what was fixed on each label printer, when, by whom and what it cost
+- Printer Inventory: log what was fixed on each label printer, when, by whom and what it cost
 - Barcode labels: every item gets its own code (RK-0001, RK-0002, …). After you add an item
   it offers to print the label; scanning it later opens that item, ready to take out
 
@@ -75,6 +75,17 @@ can't reach the server. It reconnects by itself once the server is back.
 If other devices can't connect, allow port 3000 through the server machine's firewall
 (Windows asks the first time Node.js starts; choose **Private networks**).
 
+## Reordering (Export Order)
+
+Each item has optional **Minimum on hand** and **Maximum on hand** fields (Add item or Edit
+item). When an item's count drops below its minimum, its card shows **Below min** and it goes
+on the order report.
+
+**Export Order** on the Inventory screen lists every item below its minimum, with how many to
+order to bring it back up to its maximum (or up to the minimum if no maximum is set).
+**Download CSV** for a spreadsheet or **Print** it on regular paper. The inventory CSV export
+also includes each item's minimum and maximum.
+
 ## Barcode labels and scanning
 
 **Every item gets a barcode code** like `RK-0001`, assigned in order and never reused.
@@ -111,9 +122,9 @@ your name:
 - **Scan button:** type a code by hand. On HTTPS setups in Chrome/Edge it can also use the
   device's camera.
 
-## Printer repairs
+## Printer Inventory
 
-The **Printer repairs** tab keeps a maintenance history for your label printers.
+The **Printer Inventory** tab keeps a maintenance history for your label printers.
 
 1. **Add printer**: a name (like "Shipping desk printer"), make and model, serial number,
    where it is, and any notes such as warranty dates. Each printer gets its own barcode code
@@ -250,8 +261,8 @@ All routes except `/api/auth/*` need a logged-in session cookie (`POST /api/auth
 | `POST /api/auth/logout`                | Lock this device                                     |
 | `POST /api/auth/change-pin`            | `{current, next}`                                    |
 | `GET /api/items`                       | All items                                            |
-| `POST /api/items`                      | Add item `{name, qty, unit}`                         |
-| `PUT /api/items/:id`                   | Edit item `{name, unit, qty, person}`                |
+| `POST /api/items`                      | Add item `{name, qty, unit, minQty, maxQty}`         |
+| `PUT /api/items/:id`                   | Edit item `{name, unit, qty, minQty, maxQty, person}` |
 | `DELETE /api/items/:id`                | Remove item                                          |
 | `POST /api/labels-printed`             | Mark labels printed `{ids: [...]}`                   |
 | `GET/POST /api/printers`               | List or add label printers                           |
@@ -265,6 +276,7 @@ All routes except `/api/auth/*` need a logged-in session cookie (`POST /api/auth
 | `POST /api/items/:id/transactions`     | `{type: take\|return\|restock, qty, person, note}`   |
 | `GET /api/log?limit=1000`              | Latest activity, newest first                        |
 | `GET /api/events`                      | Live change notifications (Server-Sent Events)       |
+| `GET /api/export/order.csv`            | Items below minimum with order quantities            |
 | `GET /api/export/inventory.csv`        | Inventory CSV                                        |
 | `GET /api/export/activity.csv`         | Activity CSV (`q`, `type`, `from`, `to` in ms)       |
 

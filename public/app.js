@@ -58,12 +58,14 @@ const imgUrl=it=>it&&it.image?it.image:'';
 const initials=n=>String(n||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase();
 const fmtWhen=ms=>{const d=new Date(ms);return d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})+' '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})};
 function thumbHTML(it){const u=imgUrl(it);return `<div class="thumb"><span class="ph">${esc(initials(it&&it.name))}</span>${u?`<img src="${esc(u)}" alt="" loading="lazy" onerror="this.remove()">`:''}</div>`}
-function stockPill(it){return (it.qty||0)<=0?'<span class="pill out">Out</span>':''}
+const belowMin=it=>it.minQty!=null&&(it.qty||0)<it.minQty;
+function stockPill(it){return (it.qty||0)<=0?'<span class="pill out">Out</span>':belowMin(it)?'<span class="pill low">Below min</span>':''}
 const signed=e=>{const d=e.type==='adjust'?e.delta:(e.type==='take'?-e.qty:e.qty);return (d<0?'−':'+')+Math.abs(d||0)};
 
 /* ---------- Inventory view ---------- */
 function renderInventory(){
   const outCount=S.items.filter(i=>(i.qty||0)<=0).length;
+  const lowCount=S.items.filter(belowMin).length;
   const q=S.q.trim().toLowerCase();
   const list=S.items.filter(i=>!q||(String(i.name)+' '+(i.code||'')).toLowerCase().includes(q));
   const cmp={name:(a,b)=>String(a.name).localeCompare(b.name),low:(a,b)=>(a.qty||0)-(b.qty||0)}[S.sort];
@@ -76,7 +78,7 @@ function renderInventory(){
   $('#empty').hidden=!showEmpty;
   $('#summary').hidden=showEmpty;
   if(!S.loaded)$('#summary').textContent='Loading inventory…';
-  else if(S.items.length)$('#summary').textContent=`${list.length} of ${S.items.length} items`+(outCount?` · ${outCount} out of stock`:'');
+  else if(S.items.length)$('#summary').textContent=`${list.length} of ${S.items.length} items`+(outCount?` · ${outCount} out of stock`:'')+(lowCount?` · ${lowCount} below minimum`:'');
   else $('#summary').textContent='';
   if(S.loaded&&S.items.length&&!list.length)$('#grid').innerHTML=`<p class="summary">No items match “${esc(S.q)}”.</p>`;
 }
@@ -127,6 +129,7 @@ function openItem(id){
   <div class="phead">${thumbHTML(it)}
     <div style="min-width:0"><h2>${esc(it.name)}</h2>
       <div class="meta"><span>On hand <b id="onhand">${it.qty||0}</b> ${esc(it.unit||'pcs')}</span>${stockPill(it)}</div>
+      ${it.minQty!=null||it.maxQty!=null?`<div class="meta" style="margin-top:4px">${it.minQty!=null?`<span>Min <b>${it.minQty}</b></span>`:''}${it.maxQty!=null?`<span>Max <b>${it.maxQty}</b></span>`:''}</div>`:''}
       ${it.code?`<div class="meta" style="margin-top:4px"><span>Barcode <b>${esc(it.code)}</b></span></div>`:''}
     </div>
     <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button>
@@ -213,6 +216,11 @@ function openEdit(id){
       <div class="field"><label for="edQty">${isNew?'Starting count':'Count on hand'}</label><input id="edQty" type="number" inputmode="numeric" min="0" step="1" value="${it?it.qty||0:0}"></div>
       <div class="field"><label for="edUnit">Unit</label><input id="edUnit" value="${esc(it?it.unit||'pcs':'pcs')}" placeholder="pcs, boxes, ft"></div>
     </div>
+    <div class="row2">
+      <div class="field"><label for="edMin">Minimum on hand</label><input id="edMin" type="number" inputmode="numeric" min="0" step="1" value="${it&&it.minQty!=null?it.minQty:''}" placeholder="Optional"></div>
+      <div class="field"><label for="edMax">Maximum on hand</label><input id="edMax" type="number" inputmode="numeric" min="0" step="1" value="${it&&it.maxQty!=null?it.maxQty:''}" placeholder="Optional"></div>
+    </div>
+    <p class="after" style="margin:-8px 0 0">When the count drops below the minimum, the item goes on the order report, which orders enough to get back up to the maximum.</p>
     ${isNew?'':`<div class="field"><label for="edWho">Your name (for the count change, if any)</label><input id="edWho" placeholder="Who is correcting the count?"></div>`}
     <button class="btn primary big" type="submit" id="edGo">${isNew?'Add to inventory':'Save changes'}</button>
     <div class="foot">${isNew?'<span></span>':'<button class="btn danger" type="button" data-act="del">Remove item</button>'}<button class="btn ghost" type="button" data-act="${isNew?'close':'back'}">Cancel</button></div>
@@ -230,7 +238,8 @@ function openEdit(id){
   p.querySelector('#edForm').addEventListener('submit',async e=>{e.preventDefault();
     const go=p.querySelector('#edGo');const v=s=>p.querySelector(s).value.trim();
     const name=v('#edName');if(!name)return;
-    const body={name,unit:v('#edUnit')||'pcs',qty:Math.max(0,Math.floor(Number(v('#edQty'))||0))};
+    const body={name,unit:v('#edUnit')||'pcs',qty:Math.max(0,Math.floor(Number(v('#edQty'))||0)),minQty:v('#edMin'),maxQty:v('#edMax')};
+    if(body.minQty!==''&&body.maxQty!==''&&Number(body.maxQty)<Number(body.minQty)){toast('Maximum must be at least the minimum.');p.querySelector('#edMax').focus();return}
     if(!isNew)body.person=v('#edWho');
     go.disabled=true;go.textContent='Saving…';
     try{
@@ -527,6 +536,38 @@ function openScan(){
 }
 $('#scanBtn').onclick=openScan;
 $('#labelsBtn').onclick=()=>openLabels(null);
+
+/* ---------- Order report: items below their minimum ---------- */
+function orderRows(){
+  return S.items.filter(belowMin).map(i=>Object.assign({},i,{orderQty:(i.maxQty!=null?i.maxQty:i.minQty)-(i.qty||0)}))
+    .sort((a,b)=>String(a.name).localeCompare(b.name));
+}
+function orderTable(rows){
+  return `<table class="otable"><thead><tr><th>Item</th><th>Barcode</th><th class="r">On hand</th><th class="r">Min</th><th class="r">Max</th><th class="r">Order</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td class="mono">${esc(r.code)}</td><td class="r">${r.qty||0}</td><td class="r">${r.minQty}</td><td class="r">${r.maxQty==null?'—':r.maxQty}</td><td class="r"><b>${r.orderQty}</b> ${esc(r.unit||'pcs')}</td></tr>`).join('')}</tbody></table>`;
+}
+function openOrder(){
+  const rows=orderRows();
+  const noLevels=!S.items.some(i=>i.minQty!=null);
+  openPanel(`<div class="phead"><div style="min-width:0"><h2>Order report</h2>
+      <div class="meta">${rows.length?`${rows.length} ${rows.length===1?'item is':'items are'} below minimum. Order brings each back up to its maximum.`:'Nothing is below its minimum right now.'}</div></div>
+    <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
+  <div class="stack">
+    ${rows.length?`<div class="tablebox">${orderTable(rows)}</div>`:`<p class="after">${noLevels?'No items have a minimum set yet. Open an item, press Edit item and fill in Minimum on hand and Maximum on hand.':'Every item with a minimum has enough on hand.'}</p>`}
+    ${rows.length?`<div class="foot"><button class="btn" type="button" data-act="print">Print</button><button class="btn primary" type="button" data-act="csv">Download CSV</button></div>`:''}
+  </div>`,'Order report');
+  const p=$('#panel');
+  p.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.act==='close')closePanel();
+    else if(b.dataset.act==='csv')download('/api/export/order.csv');
+    else if(b.dataset.act==='print'){
+      const area=$('#printArea');area.className='fmt-order';
+      area.innerHTML=`<h1>Order report</h1><p>${esc(new Date().toLocaleString())} · ${rows.length} ${rows.length===1?'item':'items'} below minimum</p>${orderTable(orderRows())}`;
+      $('#pageSize').textContent='@page{size:letter;margin:0.5in}';
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));window.print();
+    }});
+}
+$('#orderBtn').onclick=openOrder;
 
 /* ---------- Printer repairs ---------- */
 const REPAIR_TYPES=['Printhead cleaned','Printhead replaced','Platen roller cleaned','Platen roller replaced','Label jam cleared',
