@@ -85,13 +85,14 @@ can also print from any item (**Print label**), or print many at once (**Print l
 the Inventory screen). The list ticks items that still need a label and tracks which have
 been printed. Two layouts:
 
-- **Label printer, 1 × 0.5 in** (1 in wide, ½ in tall). One label per page. Works with Dymo,
-  Brother, Zebra and Rollo printers. In the print dialog choose the 1 × 0.5 in label size and set margins
+- **Label printer, 2 × 1 in** (2 in wide, 1 in tall). One label per page. Works with Dymo,
+  Brother, Zebra and Rollo printers. In the print dialog choose the 2 × 1 in label size and set margins
   to none.
-- **Regular paper, Letter.** Labels laid out 6 across with cut lines.
+- **Regular paper, Letter.** Labels laid out 3 across with cut lines.
 
-Each label has the item name (one line), a **Code 128 barcode** and the code in plain text.
-So the bars fit a 1-inch label and still print cleanly, the barcode holds a 6-digit number
+Item labels have the name (up to 2 lines), a **Code 128 barcode** and the code in plain text.
+Printer labels have the model and serial number instead of the name. So the bars stay wide and
+easy to scan, the barcode holds a 6-digit number
 instead of the letters: `100001` is item `RK-0001`, `200001` is printer `PR-0001`. The app
 understands both, so labels printed before this change still work. (If you scan a label into
 another program, such as Excel, you'll see the 6-digit number.)

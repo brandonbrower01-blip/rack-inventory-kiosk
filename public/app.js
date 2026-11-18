@@ -348,7 +348,7 @@ function openChangePin(){
 $('#pinBtn').onclick=openChangePin;
 
 /* ---------- Barcodes & labels ---------- */
-// Barcodes on 1 x 0.5 in labels hold a 6-digit number so the bars stay wide enough to print:
+// Label barcodes hold a 6-digit number (Code 128C), which prints narrower and scans more reliably than letters:
 // 1xxxxx is item RK-xxxx, 2xxxxx is printer PR-xxxx. Labels printed earlier hold the code itself.
 function parseCode(text){
   const t=String(text||'').trim();
@@ -397,14 +397,16 @@ function fitSvg(svg){
   svg.removeAttribute('width');svg.removeAttribute('height');
   return svg;
 }
-// Each bar module is 0.00985 in: exactly 2 dots on a 203 dpi printer and 3 dots at 300 dpi,
-// so bars print evenly instead of being stretched to fit.
-const MODULE_IN=0.00985;
-// Shrink a label's text line until it fits (down to 4.5pt), so serial numbers aren't cut off.
+// Labels are 2 in wide x 1 in tall. Bars are sized in whole printer dots so they print evenly:
+// 0.0197 in is 4 dots at 203 dpi and 6 dots at 300 dpi. Smaller sizes are used only if a long code wouldn't fit.
+const LABEL_BAR_MAX_IN=1.76;
+const MODULE_SIZES=[0.0197,0.0148,0.00985];
+// Shrink single-line label text until it fits (down to 70% of its size), so serial numbers aren't cut off.
 function fitLabelText(root){
-  root.querySelectorAll('.l-name').forEach(el=>{
-    let pt=5.5;el.style.fontSize=pt+'pt';
-    while(el.scrollWidth>el.clientWidth+0.5&&pt>4.5){pt=Math.round((pt-0.25)*100)/100;el.style.fontSize=pt+'pt'}
+  root.querySelectorAll('.l-fit').forEach(el=>{
+    el.style.fontSize='';
+    const base=parseFloat(getComputedStyle(el).fontSize);let px=base;
+    while(el.scrollWidth>el.clientWidth+0.5&&px>base*0.7){px-=base*0.04;el.style.fontSize=px+'px'}
   });
 }
 function code128Svg(code){
@@ -413,12 +415,14 @@ function code128Svg(code){
   JsBarcode(el,data||code,{format:data?'CODE128C':'CODE128',displayValue:false,margin:0,height:40,width:1,background:'#ffffff',lineColor:'#000000'});
   const modules=parseFloat(el.getAttribute('width'));
   fitSvg(el);el.setAttribute('preserveAspectRatio','none');
-  el.setAttribute('style',`width:${(modules*MODULE_IN).toFixed(4)}in`);
+  const mod=MODULE_SIZES.find(m=>modules*m<=LABEL_BAR_MAX_IN)||MODULE_SIZES[MODULE_SIZES.length-1];
+  el.setAttribute('style',`width:${(modules*mod).toFixed(4)}in`);
   return el.outerHTML;
 }
 function labelHTML(it){
   // Printer labels leave out the name (it changes when a printer moves); scanning shows the current name.
-  if(String(it.code).startsWith('PR-'))return `<div class="label"><div class="l-name">${esc([it.model||'Label printer',it.serial&&('S/N '+it.serial)].filter(Boolean).join(' · '))}</div>
+  if(String(it.code).startsWith('PR-'))return `<div class="label"><div class="l-name l-fit">${esc(it.model||'Label printer')}</div>
+    ${it.serial?`<div class="l-sub l-fit">S/N ${esc(it.serial)}</div>`:''}
     <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;
   return `<div class="label"><div class="l-name">${esc(it.name)}</div>
     <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;
@@ -431,7 +435,7 @@ async function printLabels(ids,format){
   area.className='fmt-'+format;
   area.innerHTML=list.map(it=>labelHTML(it)).join('');
   area.style.display='block';fitLabelText(area);area.style.display='';
-  $('#pageSize').textContent=format==='sheet'?'@page{size:letter;margin:0.5in}':'@page{size:1in 0.5in;margin:0}';
+  $('#pageSize').textContent=format==='sheet'?'@page{size:letter;margin:0.5in}':'@page{size:2in 1in;margin:0}';
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
   window.print();
   try{await api('POST','/api/labels-printed',{ids:list.map(i=>i.id)})}catch(e){}
@@ -459,7 +463,7 @@ async function openLabels(ids,opts){
       ${items.map(i=>`<label><input type="checkbox" value="${esc(i.id)}" ${ids.includes(i.id)?'checked':''}> <span class="pname">${esc(i.name)}</span> <span class="when">${esc(i.code)}</span> ${i.labelPrintedAt?'<span class="pill okp">Printed</span>':'<span class="pill low">Needs label</span>'}</label>`).join('')||`<p class="summary">No ${noun}s yet.</p>`}
     </div>`}
     <div class="field"><label for="lblFmt">Print on</label>
-      <select id="lblFmt"><option value="roll" ${fmt==='roll'?'selected':''}>Label printer, 1 × 0.5 in (one per label)</option>
+      <select id="lblFmt"><option value="roll" ${fmt==='roll'?'selected':''}>Label printer, 2 × 1 in (one per label)</option>
       <option value="sheet" ${fmt==='sheet'?'selected':''}>Regular paper, Letter (cut out labels)</option></select></div>
     <button class="btn primary big" type="button" id="lblGo">${single?'Print label':'Print selected labels'}</button>
     ${opts.justAdded?'<button class="btn ghost" type="button" data-act="close">Skip for now</button>':''}
