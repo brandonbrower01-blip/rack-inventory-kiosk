@@ -390,8 +390,9 @@ function code128Svg(text){
   return el.outerHTML;
 }
 function labelHTML(it){
-  if(String(it.code).startsWith('PR-'))return `<div class="label"><div class="l-name">${esc(it.name)}</div>
-    <div class="l-sub">${esc([it.model,it.serial&&('S/N '+it.serial)].filter(Boolean).join(' · ')||'Label printer')}</div>
+  // Printer labels leave out the name (it changes when a printer moves); scanning shows the current name.
+  if(String(it.code).startsWith('PR-'))return `<div class="label"><div class="l-name">${esc(it.model||'Label printer')}</div>
+    ${it.serial?`<div class="l-sub">S/N ${esc(it.serial)}</div>`:''}
     <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;
   return `<div class="label"><div class="l-name">${esc(it.name)}</div>
     <div class="l-bar">${code128Svg(it.code)}</div><div class="l-code">${esc(it.code)}</div></div>`;

@@ -108,8 +108,9 @@ The **Printer repairs** tab keeps a maintenance history for your label printers.
 1. **Add printer**: a name (like "Shipping desk printer"), make and model, serial number,
    where it is, and any notes such as warranty dates. Each printer gets its own barcode code
    (`PR-0001`, `PR-0002`, …) and the app offers to print a label for it.
-2. **Stick the label on the printer.** Scanning it on any screen opens that printer's repair
-   history. **Print printer labels** prints several at once.
+2. **Stick the label on the printer.** It shows the make and model, serial number and barcode,
+   but not the printer's name, so moving or renaming a printer never means relabelling it.
+   Scanning it on any screen opens that printer's repair history under its current name. **Print printer labels** prints several at once.
 3. **Log a repair** whenever one is fixed: the date, the type of repair, who did it, parts,
    cost and what happened. Common repair types are offered (printhead cleaned or replaced,
    platen roller, label jam, cutter, sensor calibration, firmware, power supply and more), or
