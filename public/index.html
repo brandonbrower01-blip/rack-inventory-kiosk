@@ -256,14 +256,17 @@ tr.click:hover td{background:var(--surface-2)}
   body{background:#fff!important}
   body>*:not(#printArea){display:none!important}
   #printArea{display:block!important}
-  #printArea.fmt-roll .label{page-break-after:always;break-after:page}
-  #printArea.fmt-roll .label:last-child{page-break-after:auto;break-after:auto}
+  #printArea.fmt-roll-land .label{page-break-after:always;break-after:page}
+  #printArea.fmt-roll-land .label:last-child{page-break-after:auto;break-after:auto}
+  #printArea.fmt-roll .lrot{width:1in;height:2in;position:relative;overflow:hidden;page-break-after:always;break-after:page}
+  #printArea.fmt-roll .lrot:last-child{page-break-after:auto;break-after:auto}
+  #printArea.fmt-roll .lrot .label{position:absolute;top:0;left:0;transform-origin:0 0;transform:translate(1in,0) rotate(90deg)}
   #printArea.fmt-sheet{display:grid!important;grid-template-columns:repeat(3,2in);gap:.25in .3in;justify-content:center}
   #printArea.fmt-sheet .label{outline:1px dashed #999}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
 </style>
-<style id="pageSize">@page{size:2in 1in;margin:0}</style>
+<style id="pageSize">@page{size:1in 2in;margin:0}</style>
 </head>
 <body>
 <header>

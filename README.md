@@ -85,8 +85,11 @@ can also print from any item (**Print label**), or print many at once (**Print l
 the Inventory screen). The list ticks items that still need a label and tracks which have
 been printed. Two layouts:
 
-- **Label printer, 2 × 1 in** (2 in wide, 1 in tall). One label per page. Works with Dymo,
-  Brother, Zebra and Rollo printers. In the print dialog choose the 2 × 1 in label size and set margins
+- **Label printer, 2 × 1 in, portrait** (the default). Each 2 × 1 in label is turned 90° onto a
+  1 in wide × 2 in tall page, for printers that feed these labels in portrait. Choose the
+  portrait 1 × 2 in (or 2 × 1 in, portrait) label size in the print dialog and set margins to none.
+- **Label printer, 2 × 1 in, landscape.** The same label, not turned, on a 2 × 1 in page.
+  Works with Dymo, Brother, Zebra and Rollo printers. In the print dialog choose the 2 × 1 in label size and set margins
   to none.
 - **Regular paper, Letter.** Labels laid out 3 across with cut lines.
 
