@@ -85,10 +85,10 @@ can also print from any item (**Print label**), or print many at once (**Print l
 the Inventory screen). The list ticks items that still need a label and tracks which have
 been printed. Two layouts:
 
-- **Label printer, 2.25 × 1.25 in.** One label per page. Works with Dymo, Brother, Zebra and
-  Rollo printers. In the print dialog choose the 2.25 × 1.25 in label size and set margins
+- **Label printer, 1.5 × 1 in** (1.5 in wide, 1 in tall). One label per page. Works with Dymo,
+  Brother, Zebra and Rollo printers. In the print dialog choose the 1.5 × 1 in label size and set margins
   to none.
-- **Regular paper, Letter.** Labels laid out 3 across with cut lines.
+- **Regular paper, Letter.** Labels laid out 4 across with cut lines.
 
 Each label has the item name, a **Code 128 barcode** and the code in plain text.
 

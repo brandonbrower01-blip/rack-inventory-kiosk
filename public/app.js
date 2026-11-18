@@ -407,7 +407,7 @@ async function printLabels(ids,format){
   const area=$('#printArea');
   area.className='fmt-'+format;
   area.innerHTML=list.map(it=>labelHTML(it)).join('');
-  $('#pageSize').textContent=format==='sheet'?'@page{size:letter;margin:0.5in}':'@page{size:2.25in 1.25in;margin:0}';
+  $('#pageSize').textContent=format==='sheet'?'@page{size:letter;margin:0.5in}':'@page{size:1.5in 1in;margin:0}';
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
   window.print();
   try{await api('POST','/api/labels-printed',{ids:list.map(i=>i.id)})}catch(e){}
@@ -435,7 +435,7 @@ async function openLabels(ids,opts){
       ${items.map(i=>`<label><input type="checkbox" value="${esc(i.id)}" ${ids.includes(i.id)?'checked':''}> <span class="pname">${esc(i.name)}</span> <span class="when">${esc(i.code)}</span> ${i.labelPrintedAt?'<span class="pill okp">Printed</span>':'<span class="pill low">Needs label</span>'}</label>`).join('')||`<p class="summary">No ${noun}s yet.</p>`}
     </div>`}
     <div class="field"><label for="lblFmt">Print on</label>
-      <select id="lblFmt"><option value="roll" ${fmt==='roll'?'selected':''}>Label printer, 2.25 × 1.25 in (one per label)</option>
+      <select id="lblFmt"><option value="roll" ${fmt==='roll'?'selected':''}>Label printer, 1.5 × 1 in (one per label)</option>
       <option value="sheet" ${fmt==='sheet'?'selected':''}>Regular paper, Letter (cut out labels)</option></select></div>
     <button class="btn primary big" type="button" id="lblGo">${single?'Print label':'Print selected labels'}</button>
     ${opts.justAdded?'<button class="btn ghost" type="button" data-act="close">Skip for now</button>':''}
