@@ -56,8 +56,10 @@ header{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var
 .brand svg{flex:none}
 .brand h1{font-family:var(--f-display);font-weight:700;font-size:26px;letter-spacing:.02em;text-transform:uppercase;margin:0;line-height:1}
 .brand small{display:block;font-size:12px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-top:3px}
-.tabs{display:flex;gap:4px;background:var(--surface-2);padding:4px;border-radius:999px}
-.tab{border:0;background:none;padding:8px 16px;border-radius:999px;font-weight:600;color:var(--muted)}
+.tabs{display:flex;gap:4px;background:var(--surface-2);padding:4px;border-radius:999px;max-width:100%;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+@media (max-width:460px){.tab{padding:8px 11px;font-size:15px}}
+.tab{border:0;background:none;padding:8px 16px;border-radius:999px;font-weight:600;color:var(--muted);white-space:nowrap;flex:none}
 .tab[aria-selected="true"]{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);background:var(--surface);border-radius:var(--r);padding:10px 16px;font-weight:600;min-height:44px}
 .btn:hover{border-color:var(--muted)}
@@ -104,6 +106,7 @@ main{padding-block:20px 60px}
 .pill{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:999px}
 .pill.low{background:var(--beam-soft);color:var(--beam)}
 .pill.out{background:var(--bad-soft);color:var(--bad)}
+.pill.spare{background:var(--accent-soft);color:var(--accent)}
 .pill.okp{background:var(--ok-soft);color:var(--ok)}
 
 .empty{border:2px dashed var(--line);border-radius:14px;padding:40px 20px;text-align:center;color:var(--muted)}
@@ -254,6 +257,14 @@ tr.click:hover td{background:var(--surface-2)}
 .otable{min-width:680px}
 .otable td.r,.otable th.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .otable td.mono{font-family:var(--f-mono);white-space:nowrap}
+.label.tape{width:max-content;flex-direction:row;align-items:center;gap:.1in;padding:.05in .12in}
+.t-text{display:flex;flex-direction:column;justify-content:center;gap:.012in;white-space:nowrap;max-width:3in}
+.t-text>div{overflow:hidden;text-overflow:ellipsis}
+.t-text .t1{font:700 8pt/1.1 var(--f-body)}
+.t-text .t2{font:500 6.5pt/1.15 var(--f-body);color:#222}
+.t-bar{display:flex;flex-direction:column;align-items:center;gap:.015in;height:100%;flex:none}
+.t-bar .l-bar{flex:1;min-height:0}
+.t-bar .l-code{font-size:7pt}
 #printArea{display:none}
 @media print{
   body{background:#fff!important}
@@ -266,6 +277,9 @@ tr.click:hover td{background:var(--surface-2)}
   #printArea.fmt-roll .lrot .label{position:absolute;top:0;left:0;transform-origin:0 0;transform:translate(1in,0) rotate(90deg)}
   #printArea.fmt-sheet{display:grid!important;grid-template-columns:repeat(3,2in);gap:.25in .3in;justify-content:center}
   #printArea.fmt-sheet .label{outline:1px dashed #999}
+  #printArea.fmt-tape .label{page-break-after:always;break-after:page}
+  #printArea.fmt-tape .label:last-child{page-break-after:auto;break-after:auto}
+  #printArea.fmt-sheet:has(.tape){grid-template-columns:repeat(2,max-content)}
   #printArea.fmt-order{color:#000;font:10pt/1.35 var(--f-body)}
   #printArea.fmt-order h1{font:700 18pt/1.1 var(--f-display);text-transform:uppercase;margin:0 0 4px}
   #printArea.fmt-order p{margin:0 0 12px;color:#333}
@@ -288,7 +302,6 @@ tr.click:hover td{background:var(--surface-2)}
     <nav class="tabs" role="tablist">
       <button class="tab" role="tab" id="tab-inventory" aria-selected="true" data-view="inventory">Inventory</button>
       <button class="tab" role="tab" id="tab-activity" aria-selected="false" data-view="activity">Activity</button>
-      <button class="tab" role="tab" id="tab-repairs" aria-selected="false" data-view="repairs">Printer Inventory</button>
     </nav>
     <button class="btn" id="scanBtn" type="button" title="Scan a barcode"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M3 7V4h3M18 4h3v3M21 17v3h-3M6 20H3v-3"/><path d="M7 8v8M10 8v8M13 8v8M16.5 8v8"/></svg>Scan</button>
     <button class="btn" id="lockBtn" type="button" title="Lock this device"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Lock</button>
@@ -347,35 +360,6 @@ tr.click:hover td{background:var(--surface-2)}
       <tbody id="logBody"></tbody>
     </table></div>
   </section>
-  <section id="view-repairs" hidden>
-    <div class="tools">
-      <div class="search">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input id="rq" type="search" placeholder="Search printers: name, PR code, model, serial, location" autocomplete="off" aria-label="Search printers and repairs">
-      </div>
-    </div>
-    <div class="tools">
-      <div class="field"><label for="rPrinter">Printer</label><select id="rPrinter"><option value="">All printers</option></select></div>
-      <div class="field"><label for="rType">Repair type</label><select id="rType"><option value="">All types</option></select></div>
-      <span style="flex:1"></span>
-      <button class="btn" type="button" id="addPrinterBtn">Add printer</button>
-      <button class="btn" type="button" id="printerLabelsBtn">Print printer labels</button>
-      <button class="btn" type="button" id="expRepairs">Export (CSV)</button>
-      <button class="btn primary" type="button" id="logRepairBtn">Log a repair</button>
-    </div>
-    <p class="summary" id="rsummary"></p>
-    <div class="grid pgrid" id="pgrid"></div>
-    <div id="rempty" class="empty" hidden>
-      <h2>No label printers yet</h2>
-      <p>Add each label printer once, then log every repair against it: what was fixed, when, by whom and what it cost.</p>
-      <div><button class="btn primary" type="button" id="rEmptyAdd">Add a printer</button></div>
-    </div>
-    <h3 class="sect" id="rHistHead">Repair history</h3>
-    <div class="tablebox" id="rTableBox"><table>
-      <thead><tr><th>Date</th><th>Printer</th><th>Repair</th><th>Done by</th><th>Parts</th><th>Cost</th><th>Notes</th></tr></thead>
-      <tbody id="repairBody"></tbody>
-    </table></div>
-  </section>
 </main>
 
 <div class="scrim" id="scrim" hidden><div class="panel" id="panel" role="dialog" aria-modal="true"></div></div>
@@ -399,6 +383,7 @@ tr.click:hover td{background:var(--surface-2)}
 </div>
 <div id="printArea" aria-hidden="true"></div>
 <script src="/vendor/JsBarcode.code128.min.js"></script>
+<script src="/asset-kinds.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

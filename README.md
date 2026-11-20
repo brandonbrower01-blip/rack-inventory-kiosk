@@ -11,6 +11,7 @@ the same network. Every device stays in sync live.
 - Export inventory and activity to CSV (opens in Excel or Google Sheets)
 - Add, edit or remove items, with photos taken right from a tablet's camera
 - PIN login, with a 30-minute lockout after 4 wrong PINs in a row
+- Laptops / Desktops: track each computer, who it's assigned to, its status and repairs
 - Printer Inventory: log what was fixed on each label printer, when, by whom and what it cost
 - Barcode labels: every item gets its own code (RK-0001, RK-0002, …). After you add an item
   it offers to print the label; scanning it later opens that item, ready to take out
@@ -74,6 +75,25 @@ can't reach the server. It reconnects by itself once the server is back.
 
 If other devices can't connect, allow port 3000 through the server machine's firewall
 (Windows asks the first time Node.js starts; choose **Private networks**).
+
+## Laptops / Desktops
+
+The **Laptops / Desktops** tab tracks each computer individually, the same way as Printer
+Inventory: add it once, print its label, and log every repair (with parts from inventory).
+
+Fields: name, type (laptop, desktop, all-in-one), status (in use, spare, in repair, retired),
+make and model, serial number / service tag, asset tag, computer name (hostname), operating
+system, **assigned to**, location, purchase date, warranty end date and notes. Cards show who
+has each computer, its status, and a **Warranty ended** badge once the warranty date passes.
+Filter by type, status or repair type, and search by any field.
+
+The full history records every change, so reassigning a laptop shows up as
+"Assigned to: Sam → Jordan" with who made the change and when.
+
+**Computer labels** print on **0.7 in wide label tape**, and each label is as long as it needs to
+be (about 2.6 in for a typical laptop). They show the model, serial number, computer name, asset
+tag and a barcode for the `PC-` code (`300001` = `PC-0001`). Scanning one anywhere opens that
+computer. In the print dialog choose your 0.7 in (18 mm) tape and set margins to none.
 
 ## Reordering (Export Order)
 
@@ -187,6 +207,7 @@ Everything is saved in the `data` folder:
 - `uploads/`: item photos
 - `printers.json` and `repairs.json`: label printers and their repair records
 - `printer-history.jsonl`: every change to each printer and its repairs, one per line
+- `computers.json`, `computer-repairs.json` and `computer-history.jsonl`: the same for laptops / desktops
 - `config.json`: the PIN (stored hashed, never in plain text)
 - `security.json`: logged-in devices and lockouts
 
@@ -270,9 +291,10 @@ All routes except `/api/auth/*` need a logged-in session cookie (`POST /api/auth
 | `PUT/DELETE /api/printers/:id`         | Edit or remove a printer (its repairs are kept)      |
 | `GET/POST /api/repairs`                | List or log repairs `{printerId, date, type, doneBy, parts, cost, notes, inventoryParts: [{itemId, qty}]}` |
 | `PUT/DELETE /api/repairs/:id`          | Edit or delete a repair (`?returnParts=1` puts parts back) |
-| `GET /api/printer-history`             | Printer history (`?printer=<id>` for one printer)    |
-| `GET /api/export/printer-history.csv`  | Printer history CSV (`?printer=<id>`)                |
-| `GET /api/export/repairs.csv`          | Repair history CSV (`printer`, `type` filters)       |
+| `GET /api/printer-history`             | Printer history (`?id=<id>` for one printer)         |
+| `GET /api/export/printer-history.csv`  | Printer history CSV (`?id=<id>`)                     |
+| `GET /api/export/repairs.csv`          | Repair history CSV (`id`, `type` filters)            |
+| `/api/computers`, `/api/computer-repairs`, `/api/computer-history`, `/api/export/computer-repairs.csv`, `/api/export/computer-history.csv` | Same as the printer routes, for laptops / desktops (repairs use `computerId`) |
 | `POST /api/items/:id/image`            | Upload photo (raw JPEG/PNG/WebP/GIF body)            |
 | `POST /api/items/:id/transactions`     | `{type: take\|return\|restock, qty, person, note}`   |
 | `GET /api/log?limit=1000`              | Latest activity, newest first                        |
