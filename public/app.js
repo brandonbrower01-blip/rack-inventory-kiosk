@@ -67,7 +67,7 @@ function renderInventory(){
   const outCount=S.items.filter(i=>(i.qty||0)<=0).length;
   const lowCount=S.items.filter(belowMin).length;
   const q=S.q.trim().toLowerCase();
-  const list=S.items.filter(i=>!q||(String(i.name)+' '+(i.code||'')).toLowerCase().includes(q));
+  const list=S.items.filter(i=>!q||(String(i.name)+' '+(i.code||'')+' '+(i.mro||'')).toLowerCase().includes(q));
   const cmp={name:(a,b)=>String(a.name).localeCompare(b.name),low:(a,b)=>(a.qty||0)-(b.qty||0)}[S.sort];
   list.sort(cmp);
   $('#grid').innerHTML=list.map(it=>`<button class="card" data-id="${esc(it.id)}" type="button" aria-label="Open ${esc(it.name)}">
@@ -130,7 +130,7 @@ function openItem(id){
     <div style="min-width:0"><h2>${esc(it.name)}</h2>
       <div class="meta"><span>On hand <b id="onhand">${it.qty||0}</b> ${esc(it.unit||'pcs')}</span>${stockPill(it)}</div>
       ${it.minQty!=null||it.maxQty!=null?`<div class="meta" style="margin-top:4px">${it.minQty!=null?`<span>Min <b>${it.minQty}</b></span>`:''}${it.maxQty!=null?`<span>Max <b>${it.maxQty}</b></span>`:''}</div>`:''}
-      ${it.code?`<div class="meta" style="margin-top:4px"><span>Barcode <b>${esc(it.code)}</b></span></div>`:''}
+      ${it.code||it.mro?`<div class="meta" style="margin-top:4px">${it.code?`<span>Barcode <b>${esc(it.code)}</b></span>`:''}${it.mro?`<span>MRO <b>${esc(it.mro)}</b></span>`:''}</div>`:''}
     </div>
     <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button>
   </div>
@@ -212,6 +212,7 @@ function openEdit(id){
         <input id="edImg" type="file" accept="image/*" capture="environment" hidden>
         <span class="after" id="imgNote">Clear, close-up shots work best.</span></div></div>
     <div class="field"><label for="edName">Item name</label><input id="edName" required value="${esc(it?it.name:'')}" placeholder="e.g. Cat6 patch cable, 3 ft" autofocus></div>
+    <div class="field"><label for="edMro">MRO number</label><input id="edMro" maxlength="80" value="${esc(it&&it.mro||'')}" placeholder="Optional. Used on the order report"></div>
     <div class="row2">
       <div class="field"><label for="edQty">${isNew?'Starting count':'Count on hand'}</label><input id="edQty" type="number" inputmode="numeric" min="0" step="1" value="${it?it.qty||0:0}"></div>
       <div class="field"><label for="edUnit">Unit</label><input id="edUnit" value="${esc(it?it.unit||'pcs':'pcs')}" placeholder="pcs, boxes, ft"></div>
@@ -238,7 +239,7 @@ function openEdit(id){
   p.querySelector('#edForm').addEventListener('submit',async e=>{e.preventDefault();
     const go=p.querySelector('#edGo');const v=s=>p.querySelector(s).value.trim();
     const name=v('#edName');if(!name)return;
-    const body={name,unit:v('#edUnit')||'pcs',qty:Math.max(0,Math.floor(Number(v('#edQty'))||0)),minQty:v('#edMin'),maxQty:v('#edMax')};
+    const body={name,unit:v('#edUnit')||'pcs',qty:Math.max(0,Math.floor(Number(v('#edQty'))||0)),minQty:v('#edMin'),maxQty:v('#edMax'),mro:v('#edMro')};
     if(body.minQty!==''&&body.maxQty!==''&&Number(body.maxQty)<Number(body.minQty)){toast('Maximum must be at least the minimum.');p.querySelector('#edMax').focus();return}
     if(!isNew)body.person=v('#edWho');
     go.disabled=true;go.textContent='Saving…';
@@ -543,8 +544,8 @@ function orderRows(){
     .sort((a,b)=>String(a.name).localeCompare(b.name));
 }
 function orderTable(rows){
-  return `<table class="otable"><thead><tr><th>Item</th><th>Barcode</th><th class="r">On hand</th><th class="r">Min</th><th class="r">Max</th><th class="r">Order</th></tr></thead>
-    <tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td class="mono">${esc(r.code)}</td><td class="r">${r.qty||0}</td><td class="r">${r.minQty}</td><td class="r">${r.maxQty==null?'—':r.maxQty}</td><td class="r"><b>${r.orderQty}</b> ${esc(r.unit||'pcs')}</td></tr>`).join('')}</tbody></table>`;
+  return `<table class="otable"><thead><tr><th>MRO number</th><th>Item</th><th>Barcode</th><th class="r">On hand</th><th class="r">Min</th><th class="r">Max</th><th class="r">Order</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr><td class="mono">${r.mro?esc(r.mro):'<span class="when">none</span>'}</td><td>${esc(r.name)}</td><td class="mono">${esc(r.code)}</td><td class="r">${r.qty||0}</td><td class="r">${r.minQty}</td><td class="r">${r.maxQty==null?'—':r.maxQty}</td><td class="r"><b>${r.orderQty}</b> ${esc(r.unit||'pcs')}</td></tr>`).join('')}</tbody></table>`;
 }
 function openOrder(){
   const rows=orderRows();
