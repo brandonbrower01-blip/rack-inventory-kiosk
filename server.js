@@ -279,7 +279,7 @@ async function handle(req, res) {
     const levels = stockLevels(b);
     const qty = Math.max(0, int(b.qty) || 0);
     const now = Date.now();
-    const item = Object.assign({ id: newId(), code: nextCode(), name, mro: str(b.mro, 80), unit: str(b.unit, 30) || 'pcs', qty }, levels, { image: null, createdAt: now, updatedAt: now });
+    const item = Object.assign({ id: newId(), code: nextCode(), name, mro: str(b.mro, 80), partNumber: str(b.partNumber, 80), unit: str(b.unit, 30) || 'pcs', qty }, levels, { image: null, createdAt: now, updatedAt: now });
     items.push(item); saveItems();
     addLog({ itemId: item.id, itemCode: item.code, itemName: name, type: 'add', qty, delta: qty, after: qty, person: str(b.person, 80), note: 'Item added', device: device(req) });
     broadcast();
@@ -296,6 +296,7 @@ async function handle(req, res) {
       const before = item.qty;
       if (b.minQty !== undefined || b.maxQty !== undefined) Object.assign(item, stockLevels(b));
       if (b.mro !== undefined) item.mro = str(b.mro, 80);
+      if (b.partNumber !== undefined) item.partNumber = str(b.partNumber, 80);
       item.name = name;
       item.unit = str(b.unit, 30) || 'pcs';
       if (b.qty !== undefined) item.qty = Math.max(0, int(b.qty) || 0);
@@ -557,14 +558,14 @@ async function handle(req, res) {
 
   if (p === '/api/export/order.csv' && m === 'GET') {
     const rows = orderList();
-    const out = [['MRO number', 'Item', 'Barcode', 'On hand', 'Minimum', 'Maximum', 'Order quantity', 'Unit']].concat(
-      rows.map((x) => [x.mro || '', x.name, x.code, x.qty, x.minQty, x.maxQty == null ? '' : x.maxQty, x.orderQty, x.unit]));
+    const out = [['MRO number', 'Part number', 'Item', 'Barcode', 'On hand', 'Minimum', 'Maximum', 'Order quantity', 'Unit']].concat(
+      rows.map((x) => [x.mro || '', x.partNumber || '', x.name, x.code, x.qty, x.minQty, x.maxQty == null ? '' : x.maxQty, x.orderQty, x.unit]));
     return send(res, 200, '\ufeff' + csv(out), { 'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="order-${stamp()}.csv"` });
   }
   if (p === '/api/export/inventory.csv' && m === 'GET') {
-    const rows = [['Barcode', 'MRO number', 'Item', 'On hand', 'Unit', 'Minimum', 'Maximum', 'Status', 'Last updated']].concat(
-      [...items].sort((a, b) => a.name.localeCompare(b.name)).map((i) => [i.code, i.mro || '', i.name, i.qty, i.unit, i.minQty == null ? '' : i.minQty, i.maxQty == null ? '' : i.maxQty,
+    const rows = [['Barcode', 'MRO number', 'Part number', 'Item', 'On hand', 'Unit', 'Minimum', 'Maximum', 'Status', 'Last updated']].concat(
+      [...items].sort((a, b) => a.name.localeCompare(b.name)).map((i) => [i.code, i.mro || '', i.partNumber || '', i.name, i.qty, i.unit, i.minQty == null ? '' : i.minQty, i.maxQty == null ? '' : i.maxQty,
         i.qty <= 0 ? 'Out' : i.minQty != null && i.qty < i.minQty ? 'Below minimum' : 'In stock',
         new Date(i.updatedAt).toLocaleString()]));
     return send(res, 200, '﻿' + csv(rows), { 'Content-Type': 'text/csv; charset=utf-8',

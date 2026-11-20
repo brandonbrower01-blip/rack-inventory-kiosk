@@ -77,15 +77,15 @@ If other devices can't connect, allow port 3000 through the server machine's fir
 
 ## Reordering (Export Order)
 
-Each item has optional **MRO number**, **Minimum on hand** and **Maximum on hand** fields
+Each item has optional **MRO number**, **Part number**, **Minimum on hand** and **Maximum on hand** fields
 (Add item or Edit item). When an item's count drops below its minimum, its card shows **Below min** and it goes
 on the order report.
 
 **Export Order** on the Inventory screen lists every item below its minimum, with its MRO
-number and how many to order to bring it back up to its maximum (or up to the minimum if no maximum is set).
+number, part number and how many to order to bring it back up to its maximum (or up to the minimum if no maximum is set).
 **Download CSV** for a spreadsheet or **Print** it on regular paper. The inventory CSV export
-also includes each item's MRO number, minimum and maximum. You can also search for an item by
-its MRO number.
+also includes each item's MRO number, part number, minimum and maximum. You can also search
+for an item by its MRO number or part number.
 
 ## Barcode labels and scanning
 
@@ -262,8 +262,8 @@ All routes except `/api/auth/*` need a logged-in session cookie (`POST /api/auth
 | `POST /api/auth/logout`                | Lock this device                                     |
 | `POST /api/auth/change-pin`            | `{current, next}`                                    |
 | `GET /api/items`                       | All items                                            |
-| `POST /api/items`                      | Add item `{name, mro, qty, unit, minQty, maxQty}`         |
-| `PUT /api/items/:id`                   | Edit item `{name, mro, unit, qty, minQty, maxQty, person}` |
+| `POST /api/items`                      | Add item `{name, mro, partNumber, qty, unit, minQty, maxQty}`         |
+| `PUT /api/items/:id`                   | Edit item `{name, mro, partNumber, unit, qty, minQty, maxQty, person}` |
 | `DELETE /api/items/:id`                | Remove item                                          |
 | `POST /api/labels-printed`             | Mark labels printed `{ids: [...]}`                   |
 | `GET/POST /api/printers`               | List or add label printers                           |
