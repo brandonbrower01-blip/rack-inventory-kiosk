@@ -82,7 +82,7 @@ Each item has optional **MRO number**, **Part number**, **Minimum on hand** and 
 on the order report.
 
 **Export Order** on the Inventory screen lists every item below its minimum, with its MRO
-number, part number and how many to order to bring it back up to its maximum (or up to the minimum if no maximum is set).
+number, part number, barcode, count on hand, minimum and maximum.
 **Download CSV** for a spreadsheet or **Print** it on regular paper. The inventory CSV export
 also includes each item's MRO number, part number, minimum and maximum. You can also search
 for an item by its MRO number or part number.
@@ -277,7 +277,7 @@ All routes except `/api/auth/*` need a logged-in session cookie (`POST /api/auth
 | `POST /api/items/:id/transactions`     | `{type: take\|return\|restock, qty, person, note}`   |
 | `GET /api/log?limit=1000`              | Latest activity, newest first                        |
 | `GET /api/events`                      | Live change notifications (Server-Sent Events)       |
-| `GET /api/export/order.csv`            | Items below minimum with order quantities            |
+| `GET /api/export/order.csv`            | Items below minimum                                  |
 | `GET /api/export/inventory.csv`        | Inventory CSV                                        |
 | `GET /api/export/activity.csv`         | Activity CSV (`q`, `type`, `from`, `to` in ms)       |
 

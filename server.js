@@ -187,10 +187,9 @@ async function readJSON(req) {
   try { return JSON.parse(buf.toString('utf8') || '{}'); }
   catch { throw Object.assign(new Error('Request body must be JSON.'), { status: 400 }); }
 }
-// Items below their minimum, with how many to order to get back up to the maximum (or the minimum when no maximum is set).
+// Items below their minimum.
 function orderList() {
   return items.filter((i) => i.minQty != null && i.qty < i.minQty)
-    .map((i) => Object.assign({}, i, { orderQty: (i.maxQty != null ? i.maxQty : i.minQty) - i.qty }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 const badReq = (msg) => Object.assign(new Error(msg), { status: 400 });
@@ -558,8 +557,8 @@ async function handle(req, res) {
 
   if (p === '/api/export/order.csv' && m === 'GET') {
     const rows = orderList();
-    const out = [['MRO number', 'Part number', 'Item', 'Barcode', 'On hand', 'Minimum', 'Maximum', 'Order quantity', 'Unit']].concat(
-      rows.map((x) => [x.mro || '', x.partNumber || '', x.name, x.code, x.qty, x.minQty, x.maxQty == null ? '' : x.maxQty, x.orderQty, x.unit]));
+    const out = [['MRO number', 'Part number', 'Item', 'Barcode', 'On hand', 'Minimum', 'Maximum', 'Unit']].concat(
+      rows.map((x) => [x.mro || '', x.partNumber || '', x.name, x.code, x.qty, x.minQty, x.maxQty == null ? '' : x.maxQty, x.unit]));
     return send(res, 200, '\ufeff' + csv(out), { 'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="order-${stamp()}.csv"` });
   }

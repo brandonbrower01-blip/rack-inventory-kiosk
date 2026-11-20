@@ -543,18 +543,18 @@ $('#labelsBtn').onclick=()=>openLabels(null);
 
 /* ---------- Order report: items below their minimum ---------- */
 function orderRows(){
-  return S.items.filter(belowMin).map(i=>Object.assign({},i,{orderQty:(i.maxQty!=null?i.maxQty:i.minQty)-(i.qty||0)}))
+  return S.items.filter(belowMin)
     .sort((a,b)=>String(a.name).localeCompare(b.name));
 }
 function orderTable(rows){
-  return `<table class="otable"><thead><tr><th>MRO number</th><th>Part number</th><th>Item</th><th>Barcode</th><th class="r">On hand</th><th class="r">Min</th><th class="r">Max</th><th class="r">Order</th></tr></thead>
-    <tbody>${rows.map(r=>`<tr><td class="mono">${r.mro?esc(r.mro):'<span class="when">none</span>'}</td><td class="mono">${r.partNumber?esc(r.partNumber):'<span class="when">none</span>'}</td><td>${esc(r.name)}</td><td class="mono">${esc(r.code)}</td><td class="r">${r.qty||0}</td><td class="r">${r.minQty}</td><td class="r">${r.maxQty==null?'—':r.maxQty}</td><td class="r"><b>${r.orderQty}</b> ${esc(r.unit||'pcs')}</td></tr>`).join('')}</tbody></table>`;
+  return `<table class="otable"><thead><tr><th>MRO number</th><th>Part number</th><th>Item</th><th>Barcode</th><th class="r">On hand</th><th class="r">Min</th><th class="r">Max</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr><td class="mono">${r.mro?esc(r.mro):'<span class="when">none</span>'}</td><td class="mono">${r.partNumber?esc(r.partNumber):'<span class="when">none</span>'}</td><td>${esc(r.name)}</td><td class="mono">${esc(r.code)}</td><td class="r">${r.qty||0}</td><td class="r">${r.minQty}</td><td class="r">${r.maxQty==null?'—':r.maxQty}</td></tr>`).join('')}</tbody></table>`;
 }
 function openOrder(){
   const rows=orderRows();
   const noLevels=!S.items.some(i=>i.minQty!=null);
   openPanel(`<div class="phead"><div style="min-width:0"><h2>Order report</h2>
-      <div class="meta">${rows.length?`${rows.length} ${rows.length===1?'item is':'items are'} below minimum. Order brings each back up to its maximum.`:'Nothing is below its minimum right now.'}</div></div>
+      <div class="meta">${rows.length?`${rows.length} ${rows.length===1?'item is':'items are'} below minimum.`:'Nothing is below its minimum right now.'}</div></div>
     <button class="btn ghost close" type="button" data-act="close" aria-label="Close">${CLOSE}</button></div>
   <div class="stack">
     ${rows.length?`<div class="tablebox">${orderTable(rows)}</div>`:`<p class="after">${noLevels?'No items have a minimum set yet. Open an item, press Edit item and fill in Minimum on hand and Maximum on hand.':'Every item with a minimum has enough on hand.'}</p>`}
